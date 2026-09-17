@@ -14,7 +14,7 @@ export async function verifyResponsiveLayout(page, output) {
     documentState.workflows = { layout: { name: '设备运行检查', steps: documentState.presets.map(p => ({ presetId: p.id, wait: 500 })) } };
     currentWorkflow = 'layout';
     logs = []; displayMode = 'hex'; translateProtocol = false; autoScroll = false;
-    appendLogs(Array.from({ length: 80 }, (_, i) => ({ id: 72000 + i, timestamp: '2026-09-17T02:45:48.988Z', dir: i ? 'TX' : 'SYS', text: i ? '' : 'serial已就绪', hex: i ? 'A5 FA 81 00 60 80 FB' : '', byteCount: i ? 7 : 0 })));
+    appendLogs(Array.from({ length: 80 }, (_, i) => ({ id: 72000 + i, timestamp: '2026-09-17T02:45:48.988Z', dir: i ? 'TX' : 'SYS', text: i ? '' : 'cast已就绪', hex: i ? 'A5 FA 81 00 60 80 FB' : '', byteCount: i ? 7 : 0 })));
     expandedProtocols.add(logs[1]);
     renderPresets(); renderWorkflow(); updateViewButtons(); renderLogs();
     logView.follow = false;

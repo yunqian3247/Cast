@@ -3,6 +3,10 @@ import path from 'node:path';
 
 export async function verifyUpdates(page, output) {
   await page.click('#btnOpenAbout');
+  assert.equal(await page.title(), 'cast');
+  assert.equal(await page.textContent('.titlebar-brand'), 'cast');
+  assert.equal(await page.textContent('#aboutTitle'), '关于 cast');
+  assert.equal(await page.textContent('.about-brand strong'), 'cast');
   assert.equal(await page.textContent('#updateStatus'), '更新地址尚未配置');
   assert.equal(await page.isDisabled('#btnCheckUpdate'), true);
   assert.equal(await page.isVisible('#btnInstallUpdate'), false);

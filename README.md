@@ -1,10 +1,10 @@
-# serial
+# cast
 
 Windows 串口调试工具，界面和功能以 [Pebrel 设计稿](ui-preview/index-pebrel.html) 为基准。顶部配置串口，左侧管理预设，中间查看通信并发送数据，右侧编排工作流，底部显示引脚与字节计数。
 
 ## 运行
 
-当前预发布版本为 `1.0.3-preview.20260917`。执行下方打包命令后，在 `artifacts/releases/1.0.3-preview.20260917/` 中运行 `serial-win-x64-preview-Setup.exe`，或解压 `serial-win-x64-preview-Portable.zip` 后运行根目录的 `serial.exe`。运行包自带 .NET 和 Sarasa Gothic SC 字体，安装包声明 Microsoft Edge WebView2 Runtime 依赖。
+当前预发布版本为 `1.0.4-preview.20260917`。执行下方打包命令后，在 `artifacts/releases/1.0.4-preview.20260917/` 中运行 `cast-win-x64-preview-Setup.exe`，或解压 `cast-win-x64-preview-Portable.zip` 后运行根目录的 `cast.exe`。运行包自带 .NET 和 Sarasa Gothic SC 字体，安装包声明 Microsoft Edge WebView2 Runtime 依赖。
 
 顶部「关于」弹窗底部提供 Velopack 在线更新，支持检查、下载和安装重启。当前托管地址留空，配置及打包流程见[在线更新](docs/updates.md)。
 
@@ -32,7 +32,7 @@ Windows 串口调试工具，界面和功能以 [Pebrel 设计稿](ui-preview/in
 环境要求：Windows 10/11、.NET 8 SDK、WebView2 Runtime。前端测试另需 Node.js 20 或更高版本和 Playwright Chromium。
 
 ```powershell
-dotnet test .\serial.sln -c Release
+dotnet test .\cast.sln -c Release
 npm --prefix tests/web ci
 npx --prefix tests/web playwright install chromium
 npm --prefix tests/web test
@@ -41,13 +41,13 @@ pwsh -NoProfile -File scripts/Publish-Preview.ps1
 
 验收步骤和环境限制见 [功能验证](docs/functional-verification.md)。测试生成的截图位于 `artifacts/pebrel-checks`，由本地保留。
 
-字体文件、来源、校验值和 SIL Open Font License 1.1 位于 [Web/fonts](src/serial.Desktop/Web/fonts/README.md)，构建时自动复制到运行包。字体通过本地文件加载，可离线使用。
+字体文件、来源、校验值和 SIL Open Font License 1.1 位于 [Web/fonts](src/cast.Desktop/Web/fonts/README.md)，构建时自动复制到运行包。字体通过本地文件加载，可离线使用。
 
 ## 数据与设计
 
-应用设置、预设、工作流及最近 50 条发送历史位于 `%LOCALAPPDATA%\serial\Data\serial.json`，保存时生成 `.bak` 备份。首次启动自动读取旧版数据，保留旧文件；已有新配置时继续使用新配置。当前通信日志最多保留 10000 条，退出前可导出。
+应用设置、预设、工作流及最近 50 条发送历史位于 `%LOCALAPPDATA%\cast\Data\cast.json`，保存时生成 `.bak` 备份。首次启动优先读取 `serial` 版本的数据及备份，缺失时读取更早版本配置，迁移后保留旧文件；已有 `cast` 配置时继续使用当前配置。当前通信日志最多保留 10000 条，退出前可导出。
 
-通信缓存同时受最近 10000 条与 16 MiB 文本预算限制，超过任一上限时淘汰最早记录；预算按文本和 HEX 字符串的 UTF-16 大小估算。搜索、复制和导出覆盖保留记录，页面按需显示可见行。性能测量工具位于 `tests/serial.Performance`，报告输出到本地 `artifacts/performance/`。
+通信缓存同时受最近 10000 条与 16 MiB 文本预算限制，超过任一上限时淘汰最早记录；预算按文本和 HEX 字符串的 UTF-16 大小估算。搜索、复制和导出覆盖保留记录，页面按需显示可见行。性能测量工具位于 `tests/cast.Performance`，报告输出到本地 `artifacts/performance/`。
 
 旧界面、文件传输及历史会话入口已移出产品。旧版用户数据保留在原磁盘位置。
 

@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '1.0.3-preview.20260917',
+    [string]$Version = '1.0.4-preview.20260917',
     [string]$FeedUrl,
     [ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')]
     [string]$Channel
@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$sourceSettings = Get-Content -LiteralPath (Join-Path $repoRoot 'src/serial.Desktop/update-settings.json') -Raw | ConvertFrom-Json
+$sourceSettings = Get-Content -LiteralPath (Join-Path $repoRoot 'src/cast.Desktop/update-settings.json') -Raw | ConvertFrom-Json
 if (!$PSBoundParameters.ContainsKey('FeedUrl')) { $FeedUrl = $sourceSettings.feedUrl }
 if (!$PSBoundParameters.ContainsKey('Channel')) { $Channel = $sourceSettings.channel }
 if ($Channel -notmatch '^[a-z0-9][a-z0-9-]{0,63}$') { throw 'Invalid release channel.' }
@@ -25,10 +25,10 @@ Push-Location $repoRoot
 try {
     dotnet tool restore
     if ($LASTEXITCODE) { throw 'Tool restore failed.' }
-    dotnet publish src/serial.Desktop -c Release -r win-x64 --self-contained true "-p:Version=$Version" -o $publishDir
+    dotnet publish src/cast.Desktop -c Release -r win-x64 --self-contained true "-p:Version=$Version" -o $publishDir
     if ($LASTEXITCODE) { throw 'Publish failed.' }
     @{ feedUrl = $FeedUrl; channel = $Channel } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $publishDir 'update-settings.json') -Encoding utf8
-    dotnet tool run vpk -- pack --packId serial --packTitle serial --packAuthors serial --packVersion $Version --packDir $publishDir --mainExe serial.exe --runtime win-x64 --channel $Channel --icon src/serial.Desktop/Assets/serial.ico --framework webview2 --outputDir $releaseDir
+    dotnet tool run vpk -- pack --packId cast --packTitle cast --packAuthors cast --packVersion $Version --packDir $publishDir --mainExe cast.exe --runtime win-x64 --channel $Channel --icon src/cast.Desktop/Assets/cast.ico --framework webview2 --outputDir $releaseDir
     if ($LASTEXITCODE) { throw 'Velopack packaging failed.' }
     Write-Host "Release ready: $releaseDir"
 } finally { Pop-Location }

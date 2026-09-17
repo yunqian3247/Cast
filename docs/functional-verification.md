@@ -13,15 +13,15 @@
 | 布局 | 880 × 560、1120 × 700、1280 × 800、1536 × 864、1920 × 1080、2560 × 1440，面板收展、发送区调节、弹窗和 150% 像素比例截图 |
 | 桌面 | 实际 WebView2 加载、C# 消息往返、收发、断开、外部导航阻止 |
 
-2026-09-14 验证：Release 共 33 项通过，1 项真实串口对测试跳过；Playwright 全流程通过。运行 `dotnet test serial.sln -c Release` 和 `npm --prefix tests/web test` 可复验。截图输出到本地 `artifacts/pebrel-checks`。
+2026-09-14 验证：Release 共 33 项通过，1 项真实串口对测试跳过；Playwright 全流程通过。运行 `dotnet test cast.sln -c Release` 和 `npm --prefix tests/web test` 可复验。截图输出到本地 `artifacts/pebrel-checks`。
 
 2026-09-17 弹窗一致性修复：删除工作流、删除预设、导入覆盖预设库和清空终端记录统一使用应用内确认弹窗，跟随浅色、深色主题。Playwright 已验证取消、Esc、关闭按钮、默认聚焦取消、Tab 焦点循环、焦点恢复、提交防重、失败重试、运行状态复核及两种窗口尺寸，截图为 `artifacts/pebrel-checks/web-confirm-*.png`。Release 共 51 项通过，2 项依赖真实串口环境的测试跳过。
 
-排查范围为正式桌面界面的全部 `alert`、`confirm`、`prompt` 调用及宿主弹窗入口。文件导入导出使用 Windows 文件选择器；重复启动提示由应用启动阶段的系统消息框提供。`ui-preview/index-pebrel.html` 是独立设计参考，正式桌面应用加载 `src/serial.Desktop/Web/index.html`。
+排查范围为正式桌面界面的全部 `alert`、`confirm`、`prompt` 调用及宿主弹窗入口。文件导入导出使用 Windows 文件选择器；重复启动提示由应用启动阶段的系统消息框提供。`ui-preview/index-pebrel.html` 是独立设计参考，正式桌面应用加载 `src/cast.Desktop/Web/index.html`。
 
 2026-09-17 悬浮提示修复：移除正式界面的原生 `title` 提示，纯图标按钮统一使用白色应用内提示，带文字的控件、预设内容和工作流文本保留直接展示。串口沿用设备详情浮层，支持长名称、硬件识别码换行及枚举失败信息。Playwright 覆盖提示显隐、Esc、动态工作流按钮、深色界面白色提示、窗口边缘定位和串口刷新恢复，截图为 `web-icon-tooltip-*.png`、`web-port-tooltip-*.png`。
 
-2026-09-17 通信窗口性能优化：采用动态行高虚拟列表、可见行复用、时间与协议解析缓存、搜索防抖、50 ms 消息合并及前后端缓存预算。C# 测试共 52 项通过，2 项真实串口测试跳过；Playwright 验证 10000 条保留上限、16 MiB 文本预算、屏幕外搜索定位、完整与筛选导出、双击复制、历史位置保持、换行与双显布局、协议规则变更后缓存失效。实际 WebView2 已验证 10005 条批量接收顺序和清空后继续接收，性能测量工具位于 `tests/serial.Performance`，报告由本地保留。
+2026-09-17 通信窗口性能优化：采用动态行高虚拟列表、可见行复用、时间与协议解析缓存、搜索防抖、50 ms 消息合并及前后端缓存预算。C# 测试共 52 项通过，2 项真实串口测试跳过；Playwright 验证 10000 条保留上限、16 MiB 文本预算、屏幕外搜索定位、完整与筛选导出、双击复制、历史位置保持、换行与双显布局、协议规则变更后缓存失效。实际 WebView2 已验证 10005 条批量接收顺序和清空后继续接收，性能测量工具位于 `tests/cast.Performance`，报告由本地保留。
 
 2026-09-17 数据行与窗口适配：Playwright 验证单击时间、方向、数据区均可展开和收起协议释义，双击复制保持原有展开状态。左右侧栏随窗口宽度变化，工作流名称完整换行，等待时间与操作按钮按可用宽度排列。使用 60 条预设和 60 个工作流步骤，验证最小窗口到 2560 × 1440 的五档尺寸、列表末项可达、侧栏收展、拖动与键盘调整输入区，以及全屏下双击分隔条收展。1920 × 1080 时左右侧栏分别为 320px、340px，发送区总高约 181px；自动增高上限为 60px。截图为 `artifacts/pebrel-checks/web-responsive-*.png`。前端全流程通过，Release 共 52 项通过、2 项真实串口测试跳过。
 
@@ -39,14 +39,16 @@
 
 ## 设备验收
 
-2026-09-17 产品名称统一：解决方案、项目目录、命名空间、程序集、图标资源、主程序和 Velopack 应用标识统一采用 `serial`。主程序为 `serial.exe`，预发布产物位于 `artifacts/releases/1.0.3-preview.20260917/`。全新构建后 68 项 .NET 测试通过，2 项实体串口测试因缺少设备配置跳过。新增迁移测试覆盖旧配置导入、新配置优先、旧备份恢复和损坏数据处理，迁移保留旧文件。旧名称仅作为兼容读取路径和文案回退检测存在。
+2026-09-17 更名为 `cast`：解决方案、项目目录、命名空间、程序集、图标文件、界面标题、启动提示、导出文件名和 Velopack 应用标识统一更新。版本为 `1.0.4-preview.20260917`，数据保存到 `%LOCALAPPDATA%\cast\Data\cast.json`。全新构建后 71 项 .NET 测试通过，2 项实体串口测试因缺少设备配置跳过；Playwright 全流程通过，性能工具构建通过。实际 WebView2 测试核对窗口标题、启动文字、程序集名称及本地页面地址；迁移测试覆盖新配置优先、旧版配置优先级、仅备份恢复及旧文件保留。安装包和便携包位于 `artifacts/releases/1.0.4-preview.20260917/`。
+
+2026-09-17 历史版本 `1.0.3-preview.20260917`：当时统一采用 `serial` 标识，产物现已在仓库外归档。该次全新构建后 68 项 .NET 测试通过，2 项实体串口测试因缺少设备配置跳过。迁移测试覆盖旧配置导入、新配置优先、旧备份恢复和损坏数据处理，迁移保留旧文件。
 
 使用已连接的虚拟串口对，或兼容电平的串口设备。设置实际端口名称后运行：
 
 ```powershell
-$env:SERIAL_TEST_PORT_A = "COM91"
-$env:SERIAL_TEST_PORT_B = "COM92"
-dotnet test tests/serial.Tests -c Release --filter FullyQualifiedName~ConfiguredSerialPair
+$env:CAST_TEST_PORT_A = "COM91"
+$env:CAST_TEST_PORT_B = "COM92"
+dotnet test tests/cast.Tests -c Release --filter FullyQualifiedName~ConfiguredSerialPair
 ```
 
 该用例验证双向字节传输和关闭后重新打开。界面操作还需核对 USB 热插拔、自定义波特率支持、DTR/RTS 输出以及 CTS/DSR 输入。
@@ -55,6 +57,6 @@ dotnet test tests/serial.Tests -c Release --filter FullyQualifiedName~Configured
 
 当前环境缺少已配置的串口对，双向通信测试跳过。COM4 的 CH340 设备已通过仅接收连接测试：9600、8-N-1，无流控，连续三次保持连接 5 秒并关闭重开。实际物理电平、设备拔插、长时间高吞吐和多显示器 DPI 切换保留为设备验收项。
 
-2026-09-14 COM4 修复：无限读取超时触发 `SerialStream.EndRead` 的 I/O 中止异常，端口仍可查询状态。接收循环改用 250 ms 超时，空读或普通超时后等待 20 ms 继续读取，并检查驱动句柄。真实 I/O 异常仍结束连接，日志显示底层原因。使用 `$env:SERIAL_IDLE_TEST_PORT="COM4"` 运行测试后，共 38 项通过，1 项串口对测试跳过。
+2026-09-14 COM4 修复：无限读取超时触发 `SerialStream.EndRead` 的 I/O 中止异常，端口仍可查询状态。接收循环改用 250 ms 超时，空读或普通超时后等待 20 ms 继续读取，并检查驱动句柄。真实 I/O 异常仍结束连接，日志显示底层原因。使用 `$env:CAST_IDLE_TEST_PORT="COM4"` 运行测试后，共 38 项通过，1 项串口对测试跳过。
 
 软件启动时保持断开。关闭或退出立即取消后续发送，驱动释放等待上限为 3 秒，运行收尾等待上限为 1 秒。发送取消时可能关闭串口以结束驱动中的写入；待发送数据的设备接收结果需通过实际设备确认。

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>serial · Pebrel 极简工控应用</title>
-  <link rel="stylesheet" href="../src/serial.Desktop/Web/fonts.css" />
+  <title>cast · Pebrel 极简工控应用</title>
+  <link rel="stylesheet" href="../src/cast.Desktop/Web/fonts.css" />
   <style>
     /* ==========================================================================
        Pebrel / GPUI 极简纯白设计系统 (沉浸、高信噪比、平直无赘饰)
@@ -538,7 +538,7 @@
     /* ==========================================================================
        页面主体三段式应用网格 (App Shell)
        ========================================================================== */
-    .serial-shell {
+    .cast-shell {
       width: 100%;
       height: 100%;
       display: grid;
@@ -1575,12 +1575,12 @@
     <div class="desktop-titlebar" id="desktopTitlebar">
       <div class="titlebar-left-zone">
         <!-- 应用极简矢量图标 Logo (取自 artifacts/icon-preview 下的数字方波波形) -->
-        <div class="app-logo-mark" title="serial">
+        <div class="app-logo-mark" title="cast">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M2.5 12H6.5V7H12.5V17H17.5V12H21.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <span class="titlebar-brand">serial</span>
+        <span class="titlebar-brand">cast</span>
         <span class="titlebar-version">v1.0</span>
         <div class="titlebar-sep"></div>
 
@@ -1616,7 +1616,7 @@
       </div>
 
       <!-- 中间窗口拖拽空白区 -->
-      <div class="titlebar-center-drag" id="titlebarWindowText">serial · 小窗口工控台 (940 × 620)</div>
+      <div class="titlebar-center-drag" id="titlebarWindowText">cast · 小窗口工控台 (940 × 620)</div>
 
       <!-- 右侧窗口系统控制区 (置顶 + 最小化 + 最大化 + 关闭) -->
       <div class="titlebar-right-zone">
@@ -1645,7 +1645,7 @@
       </div>
     </div>
 
-    <div class="serial-shell">
+    <div class="cast-shell">
 
       <!-- 1. 顶部工控条 (34px, 针对小窗口优化) -->
       <header class="topbar">
@@ -1915,7 +1915,7 @@
       </div>
     </footer>
 
-  </div> <!-- /.serial-shell -->
+  </div> <!-- /.cast-shell -->
 </div> <!-- /.desktop-window-frame -->
 
   <!-- 弹窗：新建 / 编辑预设 -->
@@ -2035,7 +2035,7 @@
 
       <div class="form-item">
         <label>自定义文件名</label>
-        <input type="text" id="exportFileName" placeholder="serial-log-..." />
+        <input type="text" id="exportFileName" placeholder="cast-log-..." />
       </div>
 
       <div class="form-item">
@@ -2148,7 +2148,7 @@
     </div>
   </div>
 
-  <!-- 弹窗：关于 serial -->
+  <!-- 弹窗：关于 cast -->
   <div class="modal-overlay" id="aboutModal">
     <div class="modal-dialog" style="width:400px;text-align:center;padding:20px 18px;">
       <div style="display:flex;justify-content:center;margin-bottom:8px;">
@@ -2158,7 +2158,7 @@
           </svg>
         </div>
       </div>
-      <div style="font-weight:700;font-size:16px;letter-spacing:0.04em;color:var(--text);">serial</div>
+      <div style="font-weight:700;font-size:16px;letter-spacing:0.04em;color:var(--text);">cast</div>
       <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-faint);margin:2px 0 8px;">版本 v1.0.0 · Pebrel 极简纯白工控版</div>
       <p style="font-size:11.5px;color:var(--text-sub);line-height:1.5;margin-bottom:12px;text-align:left;background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;">
         面向工业与嵌入式设备的高信噪比串口调试应用。支持双向数据帧精准解析、协议中文释义翻译、自动化工作流编排调度及引脚遥测。
@@ -2166,7 +2166,7 @@
       <div style="font-size:10.5px;color:var(--text-muted);display:flex;flex-direction:column;gap:3px;text-align:left;font-family:var(--font-mono);">
         <div>• 核心引擎: .NET 8 SDK / Windows Native SerialPort</div>
         <div>• 渲染引擎: Microsoft Edge WebView2 (Chromium)</div>
-        <div>• 数据目录: %LOCALAPPDATA%\serial\Data</div>
+        <div>• 数据目录: %LOCALAPPDATA%\cast\Data</div>
         <div>• 开源协议: MIT License</div>
       </div>
       <div style="margin-top:14px;display:flex;justify-content:center;">
@@ -3391,7 +3391,7 @@
         const pad = n => String(n).padStart(2, '0');
         const timeStamp = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
         const fmt = $('exportFormat').value || 'txt';
-        $('exportFileName').value = `serial-log-${timeStamp}.${fmt}`;
+        $('exportFileName').value = `cast-log-${timeStamp}.${fmt}`;
 
         $('exportModal').classList.add('show');
       }
@@ -3438,7 +3438,7 @@
         const incHex = $('chkExportHex').checked;
         const incProto = $('chkExportProto').checked;
         const fmt = $('exportFormat').value;
-        const fileName = $('exportFileName').value.trim() || `serial-log-${Date.now()}.${fmt}`;
+        const fileName = $('exportFileName').value.trim() || `cast-log-${Date.now()}.${fmt}`;
 
         let content = '';
         let mime = 'text/plain;charset=utf-8';
@@ -3649,7 +3649,7 @@
         const blob = new Blob([json], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `serial-presets-${Date.now()}.json`;
+        a.download = `cast-presets-${Date.now()}.json`;
         a.click();
         URL.revokeObjectURL(a.href);
         showToast(`已成功导出 ${state.presets.length} 条预设指令及协议配置`);
@@ -3804,15 +3804,15 @@
         frame.classList.remove('size-880x560', 'size-940x620', 'size-full');
         if (mode === '880x560') {
           frame.classList.add('size-880x560');
-          titleText.textContent = 'serial · 紧凑小窗口 (880 × 560)';
+          titleText.textContent = 'cast · 紧凑小窗口 (880 × 560)';
           showToast('已切换至紧凑小窗 (880×560)');
         } else if (mode === '940x620') {
           frame.classList.add('size-940x620');
-          titleText.textContent = 'serial · 标准小窗口 (940 × 620)';
+          titleText.textContent = 'cast · 标准小窗口 (940 × 620)';
           showToast('已切换至标准小窗 (940×620)');
         } else if (mode === '100%') {
           frame.classList.add('size-full');
-          titleText.textContent = 'serial · 自适应铺满全屏';
+          titleText.textContent = 'cast · 自适应铺满全屏';
           showToast('已切换至自适应铺满全屏');
         }
       }

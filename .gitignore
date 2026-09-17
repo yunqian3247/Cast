@@ -50,6 +50,7 @@ Desktop.ini
 **/WebView2/
 **/*.WebView2/
 **/EBWebView/
+cast.json
 serial.json
 settings.json
 

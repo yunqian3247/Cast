@@ -1,6 +1,6 @@
 # 实施状态
 
-当前产品以 `ui-preview/index-pebrel.html` 为唯一设计基准，桌面界面位于 `src/serial.Desktop/Web`。WinForms 承载 WebView2，本地消息桥连接 C# 串口服务。
+当前产品以 `ui-preview/index-pebrel.html` 为唯一设计基准，桌面界面位于 `src/cast.Desktop/Web`。WinForms 承载 WebView2，本地消息桥连接 C# 串口服务。
 
 ## 已实现
 

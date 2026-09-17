@@ -1,8 +1,8 @@
 # 在线更新与预发布打包
 
-serial 使用 Velopack 1.2.0。SDK 与仓库本地 `vpk` 工具保持同一版本，应用标识为 `serial`，当前通道为 `win-x64-preview`。
+cast 使用 Velopack 1.2.0。SDK 与仓库本地 `vpk` 工具保持同一版本，应用标识为 `cast`，当前通道为 `win-x64-preview`。
 
-`1.0.3-preview.20260917` 起统一使用 `serial` 标识和 `serial.exe`。此前试验包的应用标识不同，首次切换使用新的安装包或便携包；后续版本继续沿用 `serial`。旧配置首次启动时自动迁移到 `%LOCALAPPDATA%\serial\Data\serial.json`，原文件保留。
+`1.0.4-preview.20260917` 起统一使用 `cast` 标识和 `cast.exe`。此前 `serial` 试验包的应用标识不同，首次切换使用新的安装包或便携包；后续版本继续沿用 `cast`。首次启动优先读取 `%LOCALAPPDATA%\serial\Data\serial.json`，缺失时读取更早版本配置，再迁移到 `%LOCALAPPDATA%\cast\Data\cast.json`，原文件保留。已有 `cast` 配置时继续使用当前配置。
 
 ## 应用内更新
 
@@ -12,7 +12,7 @@ serial 使用 Velopack 1.2.0。SDK 与仓库本地 `vpk` 工具保持同一版�
 
 ## 配置托管地址
 
-源文件为 `src/serial.Desktop/update-settings.json`，构建时复制到程序目录。当前 `feedUrl` 留空，界面显示「更新地址尚未配置」，此状态下不会发出更新请求。
+源文件为 `src/cast.Desktop/update-settings.json`，构建时复制到程序目录。当前 `feedUrl` 留空，界面显示「更新地址尚未配置」，此状态下不会发出更新请求。
 
 ```json
 {
@@ -37,15 +37,15 @@ pwsh -NoProfile -File scripts/Publish-Preview.ps1
 
 ```powershell
 pwsh -NoProfile -File scripts/Publish-Preview.ps1 `
-  -Version 1.0.3-preview.20260918 `
-  -FeedUrl https://updates.example.com/serial
+  -Version 1.0.4-preview.20260918 `
+  -FeedUrl https://updates.example.com/cast
 ```
 
 示例地址仅用于说明参数。脚本使用仓库锁定的 `vpk` 版本，生成包含 .NET 和更纱黑体的 win-x64 包，并声明 WebView2 安装依赖。输出位于 `artifacts/releases/<版本>/`：
 
-- `serial-win-x64-preview-Setup.exe`：安装包。
-- `serial-win-x64-preview-Portable.zip`：便携包，保留解压后的完整目录结构，运行根目录的 `serial.exe`。
-- `serial-<版本>-win-x64-preview-full.nupkg`：在线更新包。
+- `cast-win-x64-preview-Setup.exe`：安装包。
+- `cast-win-x64-preview-Portable.zip`：便携包，保留解压后的完整目录结构，运行根目录的 `cast.exe`。
+- `cast-<版本>-win-x64-preview-full.nupkg`：在线更新包。
 - `releases.win-x64-preview.json`：更新索引。
 - `assets.win-x64-preview.json`、`RELEASES-win-x64-preview`：Velopack 生成的发布元数据。
 
@@ -62,7 +62,7 @@ Velopack 校验下载包的大小和哈希，失败时保留重试入口。更�
 ## 验证
 
 ```powershell
-dotnet test serial.sln -c Release
+dotnet test cast.sln -c Release
 npm --prefix tests/web test
 ```
 
