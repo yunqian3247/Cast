@@ -1,0 +1,74 @@
+# Build, release, and test output
+**/[Bb]in/
+**/[Oo]bj/
+/artifacts/
+**/TestResults/
+**/coverage/
+**/playwright-report/
+**/test-results/
+*.trx
+*.coverage
+*.coveragexml
+*.log
+*.dmp
+
+# Restored dependencies
+**/node_modules/
+**/packages/
+/.nuget/packages/
+
+# IDE and machine-specific state
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.sln.iml
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local tooling, task records, and scratch files
+/.codegraph/
+/.codex/
+/.claude/
+/.workflow/
+/.trellis/
+/docs/task/
+/tmp/
+/temp/
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# Runtime data and WebView2 profiles
+**/Data/
+**/Logs/
+**/WebView2/
+**/*.WebView2/
+**/EBWebView/
+serial.json
+settings.json
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local.json
+*.local.config
+*.local.props
+*.local.targets
+*.pfx
+*.p12
+*.pem
+*.key
+*.snk
+.npmrc
+NuGet.Config
+nuget.config
+!NuGet.Config.example
+!nuget.config.example

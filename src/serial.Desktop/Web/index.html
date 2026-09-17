@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'"><title>serial</title><link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="design.css"><link rel="stylesheet" href="app.css"></head><body>
+  <header class="desktop-titlebar" id="desktopTitlebar" aria-label="窗口导航">
+    <div class="titlebar-left-zone">
+      <span class="app-logo-mark" aria-label="serial"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.5 12H6.5V7H12.5V17H17.5V12H21.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="titlebar-identity"><span class="titlebar-brand">serial</span><span class="titlebar-version" id="titlebarVersion">v1.0</span></span>
+      <span class="titlebar-sep"></span>
+      <nav class="titlebar-tools" aria-label="应用工具">
+        <button class="titlebar-icon-btn" id="btnOpenSettings" aria-label="设置"><i data-lucide="settings"></i></button>
+        <button class="titlebar-icon-btn" id="btnToggleTheme" aria-label="切换深色模式" aria-pressed="false"><i data-lucide="moon"></i></button>
+        <button class="titlebar-icon-btn" id="btnOpenShortcuts" aria-label="操作提示"><i data-lucide="keyboard"></i></button>
+        <button class="titlebar-icon-btn" id="btnOpenAbout" aria-label="关于 serial"><i data-lucide="info"></i></button>
+      </nav>
+    </div>
+    <div class="titlebar-center-drag" aria-hidden="true"></div>
+    <div class="titlebar-right-zone">
+      <button class="titlebar-icon-btn pin-btn" id="btnPinWindow" aria-label="窗口置顶" aria-pressed="false"><i data-lucide="pin"></i></button>
+      <button class="win-control-btn" id="btnWinMin" aria-label="最小化"><i data-lucide="minus"></i></button>
+      <button class="win-control-btn" id="btnWinMax" aria-label="最大化"><i data-lucide="square"></i></button>
+      <button class="win-control-btn close" id="btnWinClose" aria-label="关闭窗口"><i data-lucide="x"></i></button>
+    </div>
+  </header>
+  <div class="serial-shell">
+
+      <!-- 1. 顶部工控条 (34px, 针对小窗口优化) -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <span class="app-title">串口</span>
+          <!-- 端口连接主控群 (单一真实配置源) -->
+          <div class="port-config-group">
+            <div class="port-select-wrap" id="portSelectWrap">
+              <select id="selPort" aria-label="选择串口" aria-describedby="portDetailPopover"><option value="">未检测到串口</option></select>
+              <i data-lucide="chevron-down" class="port-select-arrow" aria-hidden="true"></i>
+
+              <!-- 悬停仅显示串口核心确认信息 -->
+              <div class="port-detail-popover" id="portDetailPopover" role="tooltip">
+                <div class="port-popover-title" id="popoverPortTitle">未选择串口</div>
+                <div class="port-popover-hwid" id="popoverPortHwid"></div>
+                <div class="port-popover-error" id="popoverPortError"></div>
+              </div>
+            </div>
+
+            <button id="btnRefreshPorts" aria-label="重新枚举并刷新可用端口" style="padding:0 5px;">⟳</button>
+
+            <select id="selBaud" aria-label="波特率" style="width:76px;">
+              <option>9600</option>
+              <option>19200</option>
+              <option>38400</option>
+              <option>57600</option>
+              <option selected>115200</option>
+              <option>230400</option>
+              <option>921600</option>
+            </select>
+
+            <!-- 格式与高级参数合并入口 (默认显示当前格式 8-N-1，点击弹窗配置校验/停止位/流控/编码) -->
+            <button id="btnAdvancedPort" style="padding:0 6px;" aria-label="点击配置数据位-校验-停止位与高级流控">
+              <span id="lblAdvFormat">8-N-1</span> <i data-lucide="settings-2"></i>
+            </button>
+
+            <button class="btn-connect" id="btnConnect" style="padding:0 10px;">打开端口</button>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <!-- 格式查看分段器 (全局数据视图) -->
+          <div class="btn-segmented-group">
+            <button class="toggle-btn active" id="btnDispText" aria-label="文本格式查看">文本</button>
+            <button class="toggle-btn" id="btnDispHex" aria-label="HEX 十六进制查看">HEX</button>
+            <button class="toggle-btn" id="btnDispBoth" aria-label="文本 + HEX 双显">双显</button>
+          </div>
+          <div class="topbar-divider"></div>
+
+          <!-- 协议翻译切换 (支持按键 P 快捷切换) -->
+          <button class="toggle-btn" id="btnToggleProtocol" aria-label="切换原始数据帧 / 协议中文命令 (按快捷键 P 或 Alt+P)">
+            <span id="labelTopProto">协议翻译: 关</span> <kbd style="font-size:var(--ui-small-font-size);color:var(--text-faint);margin-left:2px;font-family:var(--font-mono);">[P]</kbd>
+          </button>
+          <div class="topbar-divider"></div>
+
+          <!-- 侧边栏折叠抽屉开关 -->
+          <button id="btnToggleLeft" aria-label="展开/收起左侧预设栏" class="toggle-btn active">预设 <i data-lucide="panel-left"></i></button>
+          <button id="btnToggleRight" aria-label="展开/收起右侧工作流栏" class="toggle-btn">工作流 <i data-lucide="panel-right"></i></button>
+        </div>
+      </header>
+
+      <!-- 2. 三段式工作区 (默认收起右侧工作流，小窗口为中间保留超大通信视口) -->
+      <main class="workspace-body hide-right" id="workspaceBody">
+
+      <!-- 2.1 左段：预设指令库 -->
+      <aside class="left-pane" id="leftPane">
+        <div class="pane-header">
+          <span>预设指令</span>
+          <div class="pane-header-actions">
+            <button id="btnExportPresets" style="height:20px;padding:0 4px;" aria-label="导出预设备份">导出</button>
+            <button id="btnImportPresets" style="height:20px;padding:0 4px;" aria-label="导入预设 JSON">导入</button>
+            <input type="file" id="presetFileInput" accept=".json" style="display:none;">
+            <button id="btnNewPreset" style="height:20px;padding:0 4px;">+ 新建</button>
+          </div>
+        </div>
+
+        <div class="search-filter-box">
+          <input type="text" id="presetSearchInput" placeholder="过滤预设...">
+        </div>
+
+        <div class="preset-list" id="presetListContainer"></div>
+      </aside>
+
+      <!-- 2.2 中段：通信终端与手动发送 -->
+      <section class="center-pane">
+        <!-- 终端工具栏 (职责完全归位：仅承载终端检索、时间戳、清屏、导出与滚屏；彻底移除重复串口信息) -->
+        <div class="terminal-bar">
+          <div class="terminal-tools-left">
+            <div class="terminal-select">
+              <select id="filterDir" aria-label="日志方向筛选">
+                <option value="all">全部</option>
+                <option value="rx">RX</option>
+                <option value="tx">TX</option>
+                <option value="sys">SYS</option>
+              </select>
+              <i data-lucide="chevron-down" aria-hidden="true"></i>
+            </div>
+            <div class="terminal-search-box">
+              <input type="text" class="search-input" id="terminalSearch" placeholder="搜索日志" aria-label="搜索日志">
+              <span id="searchResultCount" role="status"></span>
+              <button id="btnSearchPrev" aria-label="上一个匹配">▲</button>
+              <button id="btnSearchNext" aria-label="下一个匹配">▼</button>
+            </div>
+          </div>
+
+          <div class="terminal-tools-right">
+            <div class="terminal-select">
+              <select id="selTimestampFormat" aria-label="时间戳显示格式">
+                <option value="ms">毫秒</option>
+                <option value="sec">秒</option>
+                <option value="none">隐藏</option>
+              </select>
+              <i data-lucide="chevron-down" aria-hidden="true"></i>
+            </div>
+            <button id="btnClearTerminal" style="height:22px;padding:0 5px;" aria-label="清空终端屏幕">清屏</button>
+            <button id="btnExportLog" style="height:22px;padding:0 5px;" aria-label="导出当前终端全部日志为文本文件">导出</button>
+          </div>
+        </div>
+
+        <!-- 终端纯净数据流视口 -->
+        <div class="log-viewport">
+          <div class="log-stream" id="logStream" aria-label="单击数据行展开协议释义，双击复制原始数据帧"></div>
+          <div class="toast-pill" id="globalToast" role="status" aria-live="polite" aria-atomic="true"></div>
+        </div>
+
+        <!-- 终端与发送区分隔条 (拖拽调整通信窗口与发送框高度比例，双击折叠/展开) -->
+        <div class="center-splitter" id="centerSplitter" aria-label="拖拽调整通信窗口与发送框高度比例，双击折叠/展开"></div>
+
+        <!-- 多行手动发送区 -->
+        <div class="send-box" id="sendBox">
+          <!-- 上选项条 -->
+          <div class="send-options-row">
+            <div class="send-options-left">
+              <label class="send-control-group">
+                <input type="checkbox" id="chkSendHex"> HEX 发送
+              </label>
+
+              <div class="send-control-group send-ending-group">
+                <div class="send-ending-select">
+                  <select id="selEnding" aria-label="发送附加后缀">
+                    <option value="crlf" selected>CRLF</option>
+                    <option value="lf">LF</option>
+                    <option value="cr">CR</option>
+                    <option value="none">无后缀</option>
+                    <option value="custom">自定义 HEX</option>
+                  </select>
+                  <i data-lucide="chevron-down" aria-hidden="true"></i>
+                </div>
+                <input type="text" id="customEndingHex" placeholder="如 0D 0A" aria-label="自定义 HEX 后缀" style="display:none;">
+              </div>
+
+              <div class="send-control-group send-repeat-group">
+                <label class="send-control-group">
+                  <input type="checkbox" id="chkRepeat"> 定时循环
+                </label>
+                <input type="number" id="repeatInterval" value="1000" min="20" aria-label="循环间隔（毫秒）">
+                <span class="send-unit">ms</span>
+              </div>
+            </div>
+
+            <div class="send-tools">
+              <button id="btnSendTools" class="icon-button" aria-label="更多发送工具" aria-haspopup="menu" aria-expanded="false" aria-controls="sendToolsMenu"><i data-lucide="ellipsis"></i></button>
+              <div id="sendToolsMenu" class="send-tools-menu" role="menu" aria-label="发送工具" hidden>
+                <button id="btnAppendCrc" role="menuitem" tabindex="-1" aria-label="计算并追加 Modbus CRC16 校验码"><i data-lucide="plus"></i>追加 CRC16</button>
+                <button id="btnFormatHex" role="menuitem" tabindex="-1" aria-label="将十六进制文本自动对齐为空格双字符"><i data-lucide="align-left"></i>规范 HEX</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 多行输入区域 -->
+          <div class="send-editor-body">
+            <textarea class="send-textarea" id="manualInput" placeholder="输入发送内容"></textarea>
+          </div>
+
+          <!-- 底层快捷与触发栏 -->
+          <div class="send-bottom-bar">
+            <div class="send-bottom-left">
+              <label class="send-control-group" aria-label="多行内容按行依次顺序发送">
+                <input type="checkbox" id="chkLineByLine"> 逐行发送
+              </label>
+            </div>
+            <div class="send-input-status" role="status">
+              <span id="sendValidationTip" style="display:none;">格式错误</span>
+              <span id="sendByteCounter">0 行 · 0 字节</span>
+            </div>
+
+            <div class="send-bottom-right">
+              <button id="btnClearInput" aria-label="清空输入框">清空</button>
+              <button class="btn-send" id="btnSend"><i data-lucide="send"></i>发送</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2.3 右段：工作流编排与运行 -->
+      <aside class="right-pane" id="rightPane">
+        <div class="pane-header">
+          <span>工作流编排</span>
+          <div class="pane-header-actions">
+            <button id="btnNewWorkflow" style="height:20px;padding:0 4px;">+ 新建</button>
+            <button id="btnDeleteWorkflow" style="height:20px;padding:0 4px;color:var(--error);">删除</button>
+          </div>
+        </div>
+
+        <div class="workflow-body">
+          <div class="workflow-selector-box">
+            <select id="selWorkflow" style="flex:1;height:24px;"></select>
+          </div>
+
+          <!-- 步骤队列列表 -->
+          <div class="workflow-steps-list" id="workflowStepsContainer"></div>
+
+          <!-- 添加步骤操作 (优化为双行，让预设指令名能 100% 完整显示不被裁剪) -->
+          <div class="workflow-add-box" style="display:flex;flex-direction:column;gap:5px;border:1px solid var(--border);padding:6px;border-radius:var(--radius);background:var(--bg-subtle);">
+            <div style="display:flex;align-items:center;">
+              <select id="selAddStepPreset" style="width:100%;height:24px;" aria-label="选择预设指令加入工作流"></select>
+            </div>
+            <div class="workflow-add-controls" style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+              <div style="display:flex;align-items:center;gap:3px;font-size:var(--ui-small-font-size);color:var(--text-muted);">
+                <span>延时:</span>
+                <input type="number" id="inputStepWait" value="500" min="0" style="width:56px;height:22px;" placeholder="延时" aria-label="发送后等待延时 (ms)">
+                <span style="color:var(--text-faint)">ms</span>
+              </div>
+              <button id="btnAddStepToWf" style="height:22px;padding:0 8px;">+ 添加步骤</button>
+            </div>
+          </div>
+
+          <!-- 控制与状态 -->
+          <div class="workflow-control-bar">
+            <div class="workflow-status-indicator">
+              <span>运行模式:
+                <select id="selWfMode" style="height:22px;padding:0 4px;">
+                  <option value="once">单次执行</option>
+                  <option value="loop">无限循环</option>
+                  <option value="count">循环 5 轮</option>
+                </select>
+              </span>
+              <span id="wfStateLabel">空闲</span>
+            </div>
+
+            <div class="workflow-action-buttons">
+              <button id="btnStartWf" class="btn-connect" style="height:26px;">▶ 启动</button>
+              <button id="btnStepWf" style="height:26px;" aria-label="单步执行下一步">⏭ 单步</button>
+              <button id="btnPauseWf" style="height:26px;display:none;">⏸ 暂停</button>
+              <button id="btnStopWf" style="height:26px;" disabled>■ 停止</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+    </main>
+
+    <!-- 3. 底部状态条 (24px 极简：硬件物理状态与吞吐量遥测，不重复串口配置) -->
+    <footer class="statusbar">
+      <div class="statusbar-section">
+        <span style="display:flex;align-items:center;gap:6px;">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusPortLabel">未连接</span>
+        </span>
+        <!-- 物理引脚控制与状态 -->
+        <div id="statusPins" class="status-pins" hidden>
+          <span aria-hidden="true">|</span>
+          <label class="pin-status-label" aria-label="Data Terminal Ready 输出引脚">
+            <input type="checkbox" id="chkDtrPin"> DTR
+          </label>
+          <label class="pin-status-label" aria-label="Request To Send 输出引脚">
+            <input type="checkbox" id="chkRtsPin"> RTS
+          </label>
+          <span aria-label="Clear To Send 输入引脚状态" id="ledCtsPin">CTS: ○</span>
+          <span aria-label="Data Set Ready 输入引脚状态" id="ledDsrPin">DSR: ○</span>
+        </div>
+      </div>
+
+      <div class="statusbar-section">
+        <span id="statusChannel">发送通道: 就绪</span>
+        <span>|</span>
+        <span id="statusStats">TX: 0 B  |  RX: 0 B</span>
+        <button id="btnResetStat" style="height:16px;padding:0 3px;border:none;background:transparent;color:var(--text-faint);cursor:pointer;" aria-label="重置计数器">[清零]</button>
+      </div>
+    </footer>
+
+  </div>
+<div class="modal-overlay" id="presetModal">
+    <div class="modal-dialog">
+      <div class="modal-title">
+        <span id="presetModalHeaderTitle">新建预设指令</span>
+        <button id="btnTopClosePresetModal" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <input type="hidden" id="modalPresetEditId" value="">
+      <div class="form-item">
+        <label>指令名称</label>
+        <input type="text" id="modalPresetName" placeholder="例如: 状态轮询">
+      </div>
+      <div class="form-item">
+        <label>发送内容</label>
+        <textarea id="modalPresetContent" rows="3" style="font-family:var(--font-mono);" placeholder="输入文本或 HEX 字节 (如 AA 55 01 02)"></textarea>
+      </div>
+      <div class="form-item">
+        <label>数据格式</label>
+        <select id="modalPresetFormat">
+          <option value="text">字符串文本</option>
+          <option value="hex">十六进制 (HEX)</option>
+        </select>
+      </div>
+      <div class="form-item">
+        <label>协议中文释义 (中文指令解析)</label>
+        <input type="text" id="modalPresetDesc" placeholder="例如: 发送连通性心跳探测，保活链路">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+        <div class="form-item">
+          <label>对应接收特征 (可选)</label>
+          <input type="text" id="modalPresetRxMatch" placeholder="例如: +PONG 或 AA 55 81">
+        </div>
+        <div class="form-item">
+          <label>接收应答释义 (可选)</label>
+          <input type="text" id="modalPresetRxDesc" placeholder="例如: 心跳在线应答确认">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnCancelPresetModal">取消</button>
+        <button id="btnSavePresetModal" class="btn-primary">保存指令</button>
+      </div>
+    </div>
+  </div>
+<div class="modal-overlay" id="advancedPortModal">
+    <div class="modal-dialog">
+      <div class="modal-title">
+        <span>高级串口流控与校验配置</span>
+        <button id="btnCloseAdvModal" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="form-item">
+        <label>数据位 / 校验 / 停止位 (Format)</label>
+        <select id="advFormat">
+          <option value="8-N-1" selected>8-N-1 (8位 / 无校验 / 1停止位)</option>
+          <option value="7-E-1">7-E-1 (7位 / 偶校验 / 1停止位)</option>
+          <option value="8-O-1">8-O-1 (8位 / 奇校验 / 1停止位)</option>
+          <option value="8-N-2">8-N-2 (8位 / 无校验 / 2停止位)</option>
+        </select>
+      </div>
+      <div class="form-item">
+        <label>流控制 (Flow Control)</label>
+        <select id="advFlowControl">
+          <option value="none" selected>无流控 (None)</option>
+          <option value="rtscts">硬件流控 (RTS / CTS)</option>
+          <option value="xonxoff">软件流控 (XON / XOFF)</option>
+        </select>
+      </div>
+      <div class="form-item">
+        <label>数据编码 (Encoding)</label>
+        <select id="advEncoding">
+          <option selected>UTF-8</option>
+          <option>GBK / GB2312</option>
+          <option>ASCII</option>
+        </select>
+      </div>
+      <div class="form-item">
+        <label>自定义波特率 (若列表未包含)</label>
+        <input type="number" id="advCustomBaud" placeholder="例如: 1500000">
+      </div>
+      <div class="modal-actions">
+        <button id="btnSaveAdvModal" class="btn-primary">确认应用</button>
+      </div>
+    </div>
+  </div>
+<div class="modal-overlay" id="exportModal">
+    <div class="modal-dialog" style="width:430px;">
+      <div class="modal-title">
+        <span>导出通信日志确认</span>
+        <button id="btnCloseExportModal" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button>
+      </div>
+
+      <!-- 数据概况指示微卡片 -->
+      <div style="background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;display:flex;flex-direction:column;gap:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:var(--text-sub);">待导出记录总计:</span>
+          <span id="exportTotalCount" style="font-weight:700;font-family:var(--font-mono);color:var(--text);font-size:calc(var(--ui-font-size, 12px) + 0px);">0 条</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;color:var(--text-muted);font-size:var(--ui-small-font-size);">
+          <span id="exportBreakdown">TX: 0 · RX: 0 · SYS: 0</span>
+          <span id="exportTimeRange" style="font-family:var(--font-mono);"></span>
+        </div>
+      </div>
+
+      <div class="form-item">
+        <label>导出文件格式</label>
+        <select id="exportFormat">
+          <option value="txt" selected>纯文本格式 (.txt - 便于记事本与终端查看)</option>
+          <option value="csv">表格文件 (.csv - 含 UTF-8 BOM，Excel/WPS 打开无乱码)</option>
+          <option value="json">结构化数据 (.json - 包含完整元数据与协议对象)</option>
+        </select>
+      </div>
+
+      <div class="form-item">
+        <label>自定义文件名</label>
+        <input type="text" id="exportFileName" placeholder="serial-log-...">
+      </div>
+
+      <div class="form-item">
+        <label>导出范围与字段配置</label>
+        <div style="display:flex;flex-direction:column;gap:6px;background:var(--bg-subtle);border:1px solid var(--border);padding:6px 8px;border-radius:var(--radius);">
+          <div style="display:flex;gap:16px;">
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="exportScope" value="all" checked> 导出全部记录 (<span id="exportScopeAllCount">0</span>)
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="exportScope" value="filtered"> 仅当前筛选结果 (<span id="exportScopeFilteredCount">0</span>)
+            </label>
+          </div>
+          <div style="border-top:1px solid var(--border);margin:1px 0;"></div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px;">
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="checkbox" id="chkExportTime" checked> 包含时间戳
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="checkbox" id="chkExportHex" checked> 包含 HEX 码
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="checkbox" id="chkExportProto" checked> 包含协议解析
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btnCancelExportModal">取消</button>
+        <button id="btnConfirmExport" class="btn-primary">确认导出文件</button>
+      </div>
+    </div>
+  </div>
+<div class="modal-overlay" id="workflowModal" aria-labelledby="workflowModalTitle">
+  <form class="modal-dialog workflow-dialog" id="workflowForm" novalidate>
+    <div class="modal-title"><span id="workflowModalTitle">新建工作流</span><button type="button" id="btnCloseWorkflowModal" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <div class="form-item">
+      <label for="workflowName">工作流名称</label>
+      <input type="text" id="workflowName" maxlength="120" autocomplete="off" aria-describedby="workflowNameError">
+      <div class="form-error" id="workflowNameError" role="alert"></div>
+    </div>
+    <div class="modal-actions"><button type="button" id="btnCancelWorkflowModal">取消</button><button type="submit" id="btnCreateWorkflow" class="btn-primary">创建</button></div>
+  </form>
+</div>
+<div class="modal-overlay" id="confirmationModal" aria-labelledby="confirmationTitle" aria-describedby="confirmationMessage">
+  <div class="modal-dialog confirmation-dialog">
+    <div class="modal-title"><span id="confirmationTitle"></span><button type="button" id="btnCloseConfirmation" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <p id="confirmationMessage" class="confirmation-message"></p>
+    <div id="confirmationError" class="form-error" role="alert"></div>
+    <div class="modal-actions"><button type="button" id="btnCancelConfirmation">取消</button><button type="button" id="btnConfirmAction" class="btn-danger"></button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="settingsModal" aria-labelledby="settingsTitle">
+  <div class="modal-dialog preferences-dialog">
+    <div class="modal-title"><span id="settingsTitle">偏好设置</span><button id="btnCloseSettingsModal" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <div class="preferences-grid">
+      <div class="form-item"><label for="cfgUiFontSize">界面字号</label><select id="cfgUiFontSize"><option value="11">11px</option><option value="12">12px</option><option value="13">13px</option><option value="14">14px</option><option value="16">16px</option></select></div>
+      <div class="form-item"><label for="cfgTerminalFontSize">监控与输入字号</label><select id="cfgTerminalFontSize"><option value="11">11px</option><option value="12">12px</option><option value="13">13px</option><option value="14">14px</option><option value="16">16px</option><option value="18">18px</option><option value="20">20px</option></select></div>
+    </div>
+    <div class="preferences-sidebars">
+      <div class="preference-sidebar"><label for="cfgLeftFunction">左侧功能</label><select id="cfgLeftFunction"><option value="presets">预设指令</option><option value="workflow">工作流</option></select><label class="preference-check"><input type="checkbox" id="cfgLeftDefaultVisible">启动时显示</label></div>
+      <div class="preference-sidebar"><label for="cfgRightFunction">右侧功能</label><select id="cfgRightFunction"><option value="workflow">工作流</option><option value="presets">预设指令</option></select><label class="preference-check"><input type="checkbox" id="cfgRightDefaultVisible">启动时显示</label></div>
+    </div>
+    <div class="preferences-behavior">
+      <label class="preference-check"><input type="checkbox" id="cfgAutoScroll">自动滚屏</label>
+      <label class="preference-check"><input type="checkbox" id="cfgShowPins">显示 DTR / RTS / CTS / DSR</label>
+      <label class="preference-check"><input type="checkbox" id="cfgRememberInput">保留上次输入，重启后恢复</label>
+      <label class="preference-check"><input type="checkbox" id="cfgClearAfterSend">发送成功后清空输入</label>
+      <label class="preference-check"><input type="checkbox" id="cfgHoverTips">鼠标悬浮提示</label>
+    </div>
+    <div class="preferences-actions"><button id="btnResetSettingsDefault">恢复默认</button><span></span><button id="btnCancelSettingsModal">取消</button><button id="btnSaveSettingsModal" class="btn-primary">保存设置</button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="shortcutsModal" aria-labelledby="shortcutsTitle">
+  <div class="modal-dialog">
+    <div class="modal-title"><span id="shortcutsTitle">操作提示</span><button id="btnCloseShortcutsModal" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <dl class="shortcut-list">
+      <div><dt>发送指令</dt><dd>Enter</dd></div>
+      <div><dt>输入换行</dt><dd>Shift + Enter</dd></div>
+      <div><dt>搜索日志</dt><dd>Ctrl + F</dd></div>
+      <div><dt>协议翻译</dt><dd>P / Alt + P</dd></div>
+      <div><dt>复制原始数据帧（当前显示格式）</dt><dd>双击数据行</dd></div>
+      <div><dt>展开 / 收起协议释义</dt><dd>单击数据行或行尾箭头</dd></div>
+      <div><dt>偏好设置</dt><dd>Ctrl + ,</dd></div>
+      <div><dt>操作提示</dt><dd>Alt + /</dd></div>
+      <div><dt>关闭弹窗</dt><dd>Esc</dd></div>
+    </dl>
+  </div>
+</div>
+<div class="modal-overlay" id="aboutModal" aria-labelledby="aboutTitle">
+  <div class="modal-dialog about-dialog">
+    <div class="modal-title"><span id="aboutTitle">关于 serial</span><button id="btnCloseAboutModal" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <div class="about-brand"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.5 12H6.5V7H12.5V17H17.5V12H21.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><strong>serial</strong></div>
+    <p>串口调试工具</p><p class="about-version" id="aboutVersion">v1.0</p>
+    <div class="about-update">
+      <p id="updateStatus" role="status" aria-live="polite">更新地址尚未配置</p>
+      <p id="updateVersion" class="about-version" hidden></p>
+      <progress id="updateProgress" max="100" value="0" aria-label="更新下载进度" hidden></progress>
+      <p id="updateRestartNotice" hidden>安装将关闭串口并重启应用，当前通信记录会清空。</p>
+      <p id="updateError" class="form-error" role="alert"></p>
+      <div class="update-actions">
+        <button id="btnCheckUpdate" disabled><i data-lucide="refresh-cw"></i><span>检查更新</span></button>
+        <button id="btnDownloadUpdate" hidden><i data-lucide="download"></i><span>下载更新</span></button>
+        <button id="btnInstallUpdate" class="btn-primary" hidden><i data-lucide="rotate-cw"></i><span>安装并重启</span></button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="controlTooltip" class="control-tooltip" role="tooltip" hidden></div>
+<script src="lucide.min.js"></script><script src="crc.min.js"></script><script src="virtual-log.js"></script><script src="app.js"></script></body></html>

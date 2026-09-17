@@ -1,0 +1,7 @@
+{
+  "name": "serial-web-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node serial.test.mjs" },
+  "devDependencies": { "playwright": "1.63.0" }
+}

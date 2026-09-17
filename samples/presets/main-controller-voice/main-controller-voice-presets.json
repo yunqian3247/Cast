@@ -1,0 +1,542 @@
+[
+  {
+    "id": "main-voice-81-00-60",
+    "name": "欢迎使用 [60]",
+    "content": "A5 FA 81 00 60 80 FB",
+    "format": "hex",
+    "desc": "欢迎使用晾霸智能晾衣机，我叫小E",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-0c",
+    "name": "遥控对码成功 [0C]",
+    "content": "A5 FA 81 00 0C 2C FB",
+    "format": "hex",
+    "desc": "遥控对码成功",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-91",
+    "name": "小E在 [91]",
+    "content": "A5 FA 81 00 91 B1 FB",
+    "format": "hex",
+    "desc": "小E在",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-92",
+    "name": "小E在 [92]",
+    "content": "A5 FA 81 00 92 B2 FB",
+    "format": "hex",
+    "desc": "小E在",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-93",
+    "name": "小E在 [93]",
+    "content": "A5 FA 81 00 93 B3 FB",
+    "format": "hex",
+    "desc": "小E在",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-94",
+    "name": "小E在 [94]",
+    "content": "A5 FA 81 00 94 B4 FB",
+    "format": "hex",
+    "desc": "小E在",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-95",
+    "name": "小E在 [95]",
+    "content": "A5 FA 81 00 95 B5 FB",
+    "format": "hex",
+    "desc": "小E在",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-96",
+    "name": "小E在 [96]",
+    "content": "A5 FA 81 00 96 B6 FB",
+    "format": "hex",
+    "desc": "小E在",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-97",
+    "name": "小E在 [97]",
+    "content": "A5 FA 81 00 97 B7 FB",
+    "format": "hex",
+    "desc": "小E在",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-05",
+    "name": "主机已关闭 [05]",
+    "content": "A5 FA 81 00 05 25 FB",
+    "format": "hex",
+    "desc": "主机已关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-06",
+    "name": "晾杆正在上升 [06]",
+    "content": "A5 FA 81 00 06 26 FB",
+    "format": "hex",
+    "desc": "晾杆正在上升",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-2a",
+    "name": "晾杆已上升到位 [2A]",
+    "content": "A5 FA 81 00 2A 4A FB",
+    "format": "hex",
+    "desc": "晾杆已上升到位",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-07",
+    "name": "晾杆正在下降 [07]",
+    "content": "A5 FA 81 00 07 27 FB",
+    "format": "hex",
+    "desc": "晾杆正在下降",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-2b",
+    "name": "晾杆已下降到位 [2B]",
+    "content": "A5 FA 81 00 2B 4B FB",
+    "format": "hex",
+    "desc": "晾杆已下降到位",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-08",
+    "name": "晾杆已停止 [08]",
+    "content": "A5 FA 81 00 08 28 FB",
+    "format": "hex",
+    "desc": "晾杆已停止",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-09",
+    "name": "照明已打开 [09]",
+    "content": "A5 FA 81 00 09 29 FB",
+    "format": "hex",
+    "desc": "照明已打开，两个小时后自动关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-0a",
+    "name": "照明已关闭 [0A]",
+    "content": "A5 FA 81 00 0A 2A FB",
+    "format": "hex",
+    "desc": "照明已关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-0b",
+    "name": "消毒已打开 [0B]",
+    "content": "A5 FA 81 00 0B 2B FB",
+    "format": "hex",
+    "desc": "消毒已打开，30分钟后自动关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-0d",
+    "name": "消毒已关闭 [0D]",
+    "content": "A5 FA 81 00 0D 2D FB",
+    "format": "hex",
+    "desc": "消毒已关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-0e",
+    "name": "风扇已打开 [0E]",
+    "content": "A5 FA 81 00 0E 2E FB",
+    "format": "hex",
+    "desc": "风扇已打开，两个小时后自动关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-0f",
+    "name": "风扇已关闭 [0F]",
+    "content": "A5 FA 81 00 0F 2F FB",
+    "format": "hex",
+    "desc": "风扇已关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-10",
+    "name": "烘干已打开 [10]",
+    "content": "A5 FA 81 00 10 30 FB",
+    "format": "hex",
+    "desc": "烘干已打开，两个小时后自动关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-11",
+    "name": "烘干已关闭 [11]",
+    "content": "A5 FA 81 00 11 31 FB",
+    "format": "hex",
+    "desc": "烘干已关闭，有余热，风扇延时关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-36",
+    "name": "语音功能已关闭 [36]",
+    "content": "A5 FA 81 00 36 56 FB",
+    "format": "hex",
+    "desc": "语音功能已关闭",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-37",
+    "name": "语音功能已开启 [37]",
+    "content": "A5 FA 81 00 37 57 FB",
+    "format": "hex",
+    "desc": "语音功能已开启",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-70",
+    "name": "控制命令操作说明 [70]",
+    "content": "A5 FA 81 00 70 90 FB",
+    "format": "hex",
+    "desc": "主要的控制命令有:打开照明，关闭照明；打开风扇，关闭风扇；打开烘干，关闭烘干；打开消毒，关闭消毒；晾杆上升；晾杆下降；关闭主机；打开语音；关闭语音。如需操作请先唤醒我。",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-71",
+    "name": "设置唤醒词：小E小E [71]",
+    "content": "A5 FA 81 00 71 91 FB",
+    "format": "hex",
+    "desc": "设置唤醒词为小E小E",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-72",
+    "name": "设置唤醒词：小E小E [72]",
+    "content": "A5 FA 81 00 72 92 FB",
+    "format": "hex",
+    "desc": "设置唤醒词为小E小E",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-73",
+    "name": "设置唤醒词：小E小E [73]",
+    "content": "A5 FA 81 00 73 93 FB",
+    "format": "hex",
+    "desc": "设置唤醒词为小E小E",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-74",
+    "name": "设置唤醒词：小E小E [74]",
+    "content": "A5 FA 81 00 74 94 FB",
+    "format": "hex",
+    "desc": "设置唤醒词为小E小E",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-75",
+    "name": "设置唤醒词：小E小E [75]",
+    "content": "A5 FA 81 00 75 95 FB",
+    "format": "hex",
+    "desc": "设置唤醒词为小E小E",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-76",
+    "name": "设置唤醒词：小E小E [76]",
+    "content": "A5 FA 81 00 76 96 FB",
+    "format": "hex",
+    "desc": "设置唤醒词为小E小E",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-77",
+    "name": "设置唤醒词：小E小E [77]",
+    "content": "A5 FA 81 00 77 97 FB",
+    "format": "hex",
+    "desc": "设置唤醒词为小E小E",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-18",
+    "name": "遇到障碍物 [18]",
+    "content": "A5 FA 81 00 18 38 FB",
+    "format": "hex",
+    "desc": "遇到障碍物了",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-55",
+    "name": "衣物偏重 [55]",
+    "content": "A5 FA 81 00 55 75 FB",
+    "format": "hex",
+    "desc": "衣物偏重",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-17",
+    "name": "超重休息30秒 [17]",
+    "content": "A5 FA 81 00 17 37 FB",
+    "format": "hex",
+    "desc": "太重了，休息30秒钟",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-81",
+    "name": "小E退下了 [81]",
+    "content": "A5 FA 81 00 81 A1 FB",
+    "format": "hex",
+    "desc": "小E退下了",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-82",
+    "name": "小E退下了 [82]",
+    "content": "A5 FA 81 00 82 A2 FB",
+    "format": "hex",
+    "desc": "小E退下了",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-83",
+    "name": "小E退下了 [83]",
+    "content": "A5 FA 81 00 83 A3 FB",
+    "format": "hex",
+    "desc": "小E退下了",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-84",
+    "name": "小E退下了 [84]",
+    "content": "A5 FA 81 00 84 A4 FB",
+    "format": "hex",
+    "desc": "小E退下了",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-85",
+    "name": "小E退下了 [85]",
+    "content": "A5 FA 81 00 85 A5 FB",
+    "format": "hex",
+    "desc": "小E退下了",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-86",
+    "name": "小E退下了 [86]",
+    "content": "A5 FA 81 00 86 A6 FB",
+    "format": "hex",
+    "desc": "小E退下了",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-87",
+    "name": "小E退下了 [87]",
+    "content": "A5 FA 81 00 87 A7 FB",
+    "format": "hex",
+    "desc": "小E退下了",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-1a",
+    "name": "电源故障 [1A]",
+    "content": "A5 FA 81 00 1A 3A FB",
+    "format": "hex",
+    "desc": "电源故障，请联系售后服务",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-50",
+    "name": "机器故障 [50]",
+    "content": "A5 FA 81 00 50 70 FB",
+    "format": "hex",
+    "desc": "机器故障,请联系售后服务",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-51",
+    "name": "语音播报功能已关 [51]",
+    "content": "A5 FA 81 00 51 71 FB",
+    "format": "hex",
+    "desc": "语音播报功能已关",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-52",
+    "name": "语音播报功能已开 [52]",
+    "content": "A5 FA 81 00 52 72 FB",
+    "format": "hex",
+    "desc": "语音播报功能已开",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-53",
+    "name": "语音控制功能已开 [53]",
+    "content": "A5 FA 81 00 53 73 FB",
+    "format": "hex",
+    "desc": "语音控制功能已开",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-54",
+    "name": "语音控制功能已关 [54]",
+    "content": "A5 FA 81 00 54 74 FB",
+    "format": "hex",
+    "desc": "语音控制功能已关",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-56",
+    "name": "进入自动测试 [56]",
+    "content": "A5 FA 81 00 56 76 FB",
+    "format": "hex",
+    "desc": "进入自动测试",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-57",
+    "name": "退出自动测试 [57]",
+    "content": "A5 FA 81 00 57 77 FB",
+    "format": "hex",
+    "desc": "退出自动测试",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-61",
+    "name": "超重保护中 [61]",
+    "content": "A5 FA 81 00 61 81 FB",
+    "format": "hex",
+    "desc": "超重保护中",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-62",
+    "name": "自动校准中 [62]",
+    "content": "A5 FA 81 00 62 82 FB",
+    "format": "hex",
+    "desc": "自动校准中,请勿增减重量",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-63",
+    "name": "已退出自动校准 [63]",
+    "content": "A5 FA 81 00 63 83 FB",
+    "format": "hex",
+    "desc": "已退出自动校准",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-64",
+    "name": "系统设置中 [64]",
+    "content": "A5 FA 81 00 64 84 FB",
+    "format": "hex",
+    "desc": "系统设置中,3秒内完成复合键",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-65",
+    "name": "上限位设置完成 [65]",
+    "content": "A5 FA 81 00 65 85 FB",
+    "format": "hex",
+    "desc": "上限位设置完成",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-66",
+    "name": "已注销上限位设置 [66]",
+    "content": "A5 FA 81 00 66 86 FB",
+    "format": "hex",
+    "desc": "已注销上限位设置",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-67",
+    "name": "下限位设置完成 [67]",
+    "content": "A5 FA 81 00 67 87 FB",
+    "format": "hex",
+    "desc": "下限位设置完成",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-68",
+    "name": "已注销下限位设置 [68]",
+    "content": "A5 FA 81 00 68 88 FB",
+    "format": "hex",
+    "desc": "已注销下限位设置",
+    "rxMatch": "",
+    "rxDesc": ""
+  },
+  {
+    "id": "main-voice-81-00-69",
+    "name": "隐藏晾杆超重 [69]",
+    "content": "A5 FA 81 00 69 89 FB",
+    "format": "hex",
+    "desc": "隐藏晾杆超重，请去除挂重",
+    "rxMatch": "",
+    "rxDesc": ""
+  }
+]

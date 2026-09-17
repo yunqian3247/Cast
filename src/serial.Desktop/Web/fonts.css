@@ -1,0 +1,15 @@
+@font-face {
+  font-family: "Sarasa Gothic SC";
+  src: url("fonts/SarasaGothicSC-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sarasa Gothic SC";
+  src: url("fonts/SarasaGothicSC-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
