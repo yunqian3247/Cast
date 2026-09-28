@@ -13,7 +13,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>1.0.6-preview.20260918</Version>
+    <Version>1.0.7-preview.20260927</Version>
     <AssemblyName>cast</AssemblyName>
     <RootNamespace>cast.Desktop</RootNamespace>
     <Product>cast</Product>

@@ -41,7 +41,7 @@ pwsh -NoProfile -File scripts/Publish-Preview.ps1
 
 ```powershell
 pwsh -NoProfile -File scripts/Publish-Preview.ps1 `
-  -Version 1.0.7-preview.20260918 `
+  -Version 1.0.7-preview.20260927 `
   -Source static `
   -FeedUrl https://updates.example.com/cast
 ```
@@ -60,7 +60,7 @@ pwsh -NoProfile -File scripts/Publish-Preview.ps1 `
 
 ### GitHub Releases
 
-1. 为已推送的提交创建 Release，标签与打包版本对应，例如 `v1.0.6-preview.20260917`，勾选预发布。
+1. 为已推送的提交创建 Release，标签与打包版本对应，例如 `v1.0.7-preview.20260927`，勾选预发布。
 2. 在草稿中上传 `artifacts/releases/<版本>/` 内生成的安装包、便携包、完整 `.nupkg`、`releases.win-x64-preview.json` 及其余发布元数据。保留文件名。
 3. 确认附件齐全后发布 Release。应用按 `win-x64-preview` 通道读取索引，通过公开附件地址下载更新。
 4. 通过较旧的、已配置 GitHub 更新源的 Velopack 安装版或便携版检查、下载、安装并重启，核对版本和用户配置。

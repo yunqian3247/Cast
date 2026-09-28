@@ -4,7 +4,7 @@ Windows 串口调试工具，界面和功能以 [Pebrel 设计稿](ui-preview/in
 
 ## 运行
 
-当前预发布版本为 `1.0.6-preview.20260918`。执行下方打包命令后，在 `artifacts/releases/1.0.6-preview.20260918/` 中运行 `cast-win-x64-preview-Setup.exe`，或解压 `cast-win-x64-preview-Portable.zip` 后运行根目录的 `cast.exe`。运行包自带 .NET 和 Sarasa Gothic SC 字体，安装包声明 Microsoft Edge WebView2 Runtime 依赖。
+当前预发布版本为 `1.0.7-preview.20260927`。执行下方打包命令后，在 `artifacts/releases/1.0.7-preview.20260927/` 中运行 `cast-win-x64-preview-Setup.exe`，或解压 `cast-win-x64-preview-Portable.zip` 后运行根目录的 `cast.exe`。运行包自带 .NET 和 Sarasa Gothic SC 字体，安装包声明 Microsoft Edge WebView2 Runtime 依赖。
 
 顶部「关于」弹窗底部提供 Velopack 在线更新，支持检查、下载和安装重启。默认从 [GitHub Releases](https://github.com/yunqian3247/Cast/releases) 获取 `win-x64-preview` 通道的预发布更新，配置及打包流程见[在线更新](docs/updates.md)。
 

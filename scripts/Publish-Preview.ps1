@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '1.0.6-preview.20260918',
+    [string]$Version = '1.0.7-preview.20260927',
     [string]$FeedUrl,
     [ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')]
     [string]$Channel,
