@@ -5,8 +5,10 @@ const pending = new Map();
 let requestId = 0;
 let documentState, ports = [], logs = [], currentWorkflow = '', status = { connected: false, run: { kind: 'idle', paused: false, step: -1 } };
 let displayMode = 'text', translateProtocol = false, autoScroll = true, searchIndex = -1, matches = [], historyIndex = -1;
-let initialized = false, saveTimer, toastTimer, renderQueued = false, validationVersion = 0, refreshPending = false;
+let initialized = false, saveTimer, toastTimer, renderTimer, renderQueued = false, validationVersion = 0, refreshPending = false;
 let savedDocument;
+let saveQueue = Promise.resolve(), saveRevision = 0, validationTimer, closePending = false, exportPending = false;
+const MAX_DOCUMENT_CHARS = 64 * 1024 * 1024, DOCUMENT_CHUNK_CHARS = 128 * 1024;
 let modalReturnFocus, modalFallbackFocus;
 let confirmationAction;
 let updateState = { phase: 'unconfigured', message: '更新地址尚未配置' }, updateRequestPending = false;
@@ -16,7 +18,8 @@ let theme = 'light', terminalFontSize = 12, clearAfterSend = false;
 let uiFontSize = 12, rememberInput = true, hoverTips = true, showPins = false;
 let leftFunction = 'presets', leftDefaultVisible = true, rightDefaultVisible = false;
 const UI_FONT_SIZES = [11, 12, 13, 14, 16], TERMINAL_FONT_SIZES = [11, 12, 13, 14, 16, 18, 20];
-const MAX_LOGS = 10000, MAX_LOG_TEXT_BYTES = 16 * 1024 * 1024;
+let maxLogCount = 10000, refreshIntervalMs = 50;
+const MAX_LOG_TEXT_BYTES = 16 * 1024 * 1024;
 const logCache = new WeakMap();
 const expandedProtocols = new WeakSet(), protocolIcons = new Map();
 const clockFormat = new Intl.DateTimeFormat('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -31,7 +34,7 @@ function cachedLog(log) {
 function appendLogs(entries) {
   const combined = logs.concat(entries);
   let start = combined.length, bytes = 0;
-  while (start > 0 && combined.length - start < MAX_LOGS) {
+  while (start > 0 && combined.length - start < maxLogCount) {
     const log = combined[start - 1], size = 2 * (log.text.length + log.hex.length);
     if (bytes + size > MAX_LOG_TEXT_BYTES && start < combined.length) break;
     bytes += size; start--;
@@ -43,7 +46,8 @@ function request(command, data = {}) {
   if (!window.chrome?.webview) return Promise.reject(new Error('桌面串口服务尚未就绪'));
   const id = String(++requestId);
   return new Promise((resolve, reject) => {
-    const timeoutMs = command === 'updateDownload' ? 0 : command === 'updateCheck' ? 120000 : command === 'export' || command === 'import' ? 300000 : 30000;
+    const timeoutMs = ['send','updateDownload','export','exportStart','import'].includes(command) ? 0
+      : ['init','updateCheck','saveFinish'].includes(command) ? 120000 : 30000;
     const timeout = timeoutMs ? setTimeout(() => { pending.delete(id); reject(new Error('操作超时，请重试')); }, timeoutMs) : null;
     pending.set(id, { resolve, reject, timeout });
     window.chrome.webview.postMessage({ id, command, data });
@@ -84,7 +88,7 @@ async function runUpdate(command) {
   renderUpdate();
   try {
     let data = {};
-    if (command === 'updateInstall') { ensureIdle(); clearTimeout(saveTimer); captureUi(); data = structuredClone(documentState); }
+    if (command === 'updateInstall') { ensureIdle(); await saveNow(); data = { useSavedDocument: true }; }
     renderUpdate(await request(command, data));
   } catch (error) { $('updateError').textContent = error.message; }
   finally { updateRequestPending = false; renderUpdate(); }
@@ -295,6 +299,8 @@ function updateWindowState(state) {
 function openSettings() {
   $('cfgUiFontSize').value = String(uiFontSize);
   $('cfgTerminalFontSize').value = String(terminalFontSize);
+  $('cfgMaxLogCount').value = String(maxLogCount);
+  $('cfgRefreshIntervalMs').value = String(refreshIntervalMs);
   $('cfgClearAfterSend').checked = clearAfterSend;
   $('cfgRememberInput').checked = rememberInput;
   $('cfgHoverTips').checked = hoverTips;
@@ -346,9 +352,26 @@ function updatePortDetail(error = '') {
   $('popoverPortError').textContent = error ? `读取串口列表失败：${error}` : '';
 }
 
+async function refreshPorts() {
+  if (refreshPending) return;
+  refreshPending = true;
+  const connectedAtStart = status.connected;
+  try {
+    const list = await request('ports');
+    // A scan can finish after a connection started. Keep the active port visible.
+    if (connectedAtStart || status.connected) return;
+    if (JSON.stringify(list) !== JSON.stringify(ports)) renderPorts(list);
+    else updatePortDetail();
+  } catch (error) {
+    updatePortDetail(error.message);
+  } finally {
+    refreshPending = false;
+  }
+}
+
 function captureUi() {
   documentState.ui = { displayMode, translateProtocol, autoScroll, currentWorkflow, theme, terminalFontSize, clearAfterSend,
-    uiFontSize, rememberInput, hoverTips, showPins, leftFunction, leftDefaultVisible, rightDefaultVisible,
+    uiFontSize, rememberInput, hoverTips, showPins, leftFunction, leftDefaultVisible, rightDefaultVisible, maxLogCount, refreshIntervalMs,
     inputDraft: rememberInput ? $('manualInput').value.slice(0, 1048576) : '',
     leftHidden: $('workspaceBody').classList.contains('hide-left'), rightHidden: $('workspaceBody').classList.contains('hide-right'),
     sendHeight: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--send-box-h')) || 135,
@@ -358,24 +381,51 @@ function captureUi() {
   if (!status.connected) documentState.profile = profileFromControls();
 }
 
-async function saveNow() {
-  clearTimeout(saveTimer);
-  if (!initialized || status.run.kind !== 'idle') return;
-  captureUi();
-  const snapshot = structuredClone(documentState);
+async function persistDocument(snapshot) {
+  const content = JSON.stringify(snapshot);
+  if (content.length > MAX_DOCUMENT_CHARS) throw new Error('应用配置超过 64 Mi 字符，请减少预设内容或发送历史');
+  if (content.length <= DOCUMENT_CHUNK_CHARS) return request('save', snapshot);
+  const id = crypto.randomUUID();
   try {
-    await request('save', snapshot);
-    savedDocument = snapshot;
-  } catch (error) {
-    documentState = structuredClone(savedDocument);
-    applyProfile(documentState.profile); restoreUi(); renderPresets(); renderWorkflow(); renderLogs();
-    throw error;
-  }
+    await request('saveStart', { id, length: content.length });
+    for (let offset = 0; offset < content.length;) {
+      let end = Math.min(content.length, offset + DOCUMENT_CHUNK_CHARS);
+      if (end < content.length && /[\uD800-\uDBFF]/.test(content[end - 1])) end--;
+      await request('saveChunk', { id, offset, content: content.slice(offset, end) });
+      offset = end;
+    }
+    return await request('saveFinish', { id });
+  } catch (error) { await request('saveAbort', { id }).catch(() => {}); throw error; }
+}
+
+async function saveNow(uiOverrides = {}, forClose = false) {
+  clearTimeout(saveTimer);
+  if (!initialized || (!forClose && (closePending || status.run.kind !== 'idle'))) return;
+  captureUi();
+  Object.assign(documentState.ui, uiOverrides);
+  const snapshot = structuredClone(documentState);
+  const revision = ++saveRevision;
+  const work = saveQueue.catch(() => {}).then(async () => {
+    try {
+      await persistDocument(snapshot);
+      savedDocument = snapshot;
+      applyMonitorSettings(snapshot.ui);
+    } catch (error) {
+      if (!forClose && revision === saveRevision) {
+        documentState = structuredClone(savedDocument);
+        applyProfile(documentState.profile); restoreUi(); renderPresets(); renderWorkflow(); renderLogs();
+      }
+      throw error;
+    }
+  });
+  saveQueue = work;
+  return work;
 }
 function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => saveNow().catch(error => toast(error.message)), 300); }
 
 function restoreUi() {
   const ui = documentState.ui || {};
+  applyMonitorSettings(ui);
   theme = ui.theme === 'dark' ? 'dark' : 'light';
   uiFontSize = UI_FONT_SIZES.includes(ui.uiFontSize) ? ui.uiFontSize : 12;
   terminalFontSize = TERMINAL_FONT_SIZES.includes(ui.terminalFontSize) ? ui.terminalFontSize : 12;
@@ -403,6 +453,16 @@ function restoreUi() {
   $('repeatInterval').value = ui.interval || 1000;
   $('selWfMode').value = ui.workflowMode || 'once';
   updateViewButtons();
+}
+
+function applyMonitorSettings(ui) {
+  maxLogCount = Number.isInteger(ui.maxLogCount) && ui.maxLogCount >= 100 && ui.maxLogCount <= 100000 ? ui.maxLogCount : 10000;
+  const interval = Number.isInteger(ui.refreshIntervalMs) && ui.refreshIntervalMs >= 20 && ui.refreshIntervalMs <= 1000 ? ui.refreshIntervalMs : 50;
+  if (refreshIntervalMs !== interval) {
+    refreshIntervalMs = interval;
+    if (renderQueued) { clearTimeout(renderTimer); renderQueued = false; queueRender(); }
+  }
+  if (logs.length > maxLogCount) { appendLogs([]); if (initialized) renderLogs(); }
 }
 
 function updateViewButtons() {
@@ -434,7 +494,8 @@ function updateStatus(next) {
   for (const id of ['selPort', 'selBaud', 'btnAdvancedPort', 'btnRefreshPorts']) $(id).disabled = next.connected;
   for (const id of ['btnSend', 'chkSendHex', 'selEnding', 'customEndingHex', 'chkLineByLine', 'manualInput', 'repeatInterval', 'btnSendTools', 'btnAppendCrc', 'btnFormatHex', 'btnClearInput', 'btnNewPreset', 'btnImportPresets', 'btnSavePresetModal', 'btnNewWorkflow', 'btnDeleteWorkflow', 'selWorkflow', 'selAddStepPreset', 'inputStepWait', 'btnAddStepToWf', 'selWfMode']) $(id).disabled = busy;
   if (busy) closeSendTools();
-  $('btnSend').disabled = busy || !next.connected;
+  $('btnSend').disabled = run.kind === 'manual' ? false : busy || !next.connected;
+  $('btnSendLabel').textContent = run.kind === 'manual' ? '停止发送' : '发送';
   $('chkRepeat').disabled = !next.connected || (busy && run.kind !== 'repeat');
   $('chkRepeat').checked = run.kind === 'repeat';
   $('btnStartWf').disabled = busy || !next.connected;
@@ -529,7 +590,7 @@ function directionLogs() {
   return filteredLogs;
 }
 function queueRender() {
-  if (!renderQueued) { renderQueued = true; setTimeout(() => { renderQueued = false; if (!searchTimer) renderLogs(); }, 50); }
+  if (!renderQueued) { renderQueued = true; renderTimer = setTimeout(() => { renderQueued = false; if (!searchTimer) renderLogs(); }, refreshIntervalMs); }
 }
 function protocolIcon(name) {
   if (!protocolIcons.has(name)) {
@@ -662,10 +723,9 @@ async function validateInput() {
   updateViewButtons();
   if (!data.text) { $('sendByteCounter').textContent = '0 行 · 0 字节'; $('sendValidationTip').style.display = 'none'; return; }
   try {
-    const parts = data.lines ? data.text.replaceAll('\r\n', '\n').split('\n').filter(Boolean) : [data.text];
-    const results = await Promise.all(parts.map(text => request('encode', { ...data, text, lines: false })));
+    const result = await request('validateSend', data);
     if (version !== validationVersion) return;
-    $('sendByteCounter').textContent = `${data.text.split('\n').length} 行 · ${results.reduce((sum, item) => sum + item.byteCount, 0)} 字节`;
+    $('sendByteCounter').textContent = `${result.lineCount} 行 · ${result.byteCount} 字节`;
     $('sendValidationTip').style.display = 'none';
   } catch (error) {
     if (version !== validationVersion) return;
@@ -674,6 +734,10 @@ async function validateInput() {
     $('sendValidationTip').style.display = '';
     $('sendByteCounter').textContent = '-- 字节';
   }
+}
+function scheduleValidation() {
+  clearTimeout(validationTimer); validationVersion++;
+  validationTimer = setTimeout(() => { validationTimer = null; validateInput(); }, 150);
 }
 function remember(text) { documentState.history = [text, ...documentState.history.filter(item => item !== text)].slice(0, 50); historyIndex = -1; scheduleSave(); }
 async function sendManual() {
@@ -713,6 +777,36 @@ function exportData(rows, format, options) {
   const quote = value => `"${String(value ?? '').replaceAll('"','""')}"`;
   return [headers, ...items.map(item => [...(options.time ? [item.timestamp] : []), item.dir, item.text, ...(options.hex ? [item.hex,item.byteCount] : []), ...(options.protocol ? [item.protocol.title,item.protocol.desc] : [])])].map(row => row.map(quote).join(',')).join('\r\n');
 }
+async function exportContent(content, format, fileName) {
+  if (exportPending) throw new Error('已有导出任务正在进行');
+  exportPending = true;
+  try { return await exportContentCore(content, format, fileName); }
+  finally { exportPending = false; }
+}
+async function exportContentCore(content, format, fileName) {
+  const chunkSize = 512 * 1024;
+  if (content.length <= chunkSize) return request('export', { format, content, fileName });
+  let started;
+  try { started = await request('exportStart', { format, fileName }); }
+  catch (error) {
+    // Keep compatibility with older embedded hosts while the desktop host is updated.
+    if (error.message !== 'Unknown command' && error.message !== '未知操作') throw error;
+    return request('export', { format, content, fileName });
+  }
+  if (!started.saved) return started;
+  try {
+    for (let offset = 0; offset < content.length;) {
+      let end = Math.min(content.length, offset + chunkSize);
+      if (end < content.length && end > offset && /[\uD800-\uDBFF]/.test(content[end - 1])) end--;
+      await request('exportChunk', { content: content.slice(offset, end) });
+      offset = end;
+    }
+    return await request('exportFinish');
+  } catch (error) {
+    await request('exportAbort').catch(() => {});
+    throw error;
+  }
+}
 
 function configureEvents() {
   for (const id of ['btnCloseConfirmation','btnCancelConfirmation']) on(id,'click',() => hideModal('confirmationModal'));
@@ -727,6 +821,7 @@ function configureEvents() {
   for (const [id, modal] of [['btnCloseSettingsModal','settingsModal'],['btnCancelSettingsModal','settingsModal'],['btnCloseShortcutsModal','shortcutsModal'],['btnCloseAboutModal','aboutModal']]) on(id,'click',() => hideModal(modal));
   on('btnResetSettingsDefault','click',() => {
     $('cfgUiFontSize').value = '12';
+    $('cfgMaxLogCount').value = '10000'; $('cfgRefreshIntervalMs').value = '50';
     $('cfgTerminalFontSize').value = '12'; $('cfgClearAfterSend').checked = false;
     $('cfgRememberInput').checked = true; $('cfgHoverTips').checked = true;
     $('cfgAutoScroll').checked = true; $('cfgShowPins').checked = false;
@@ -740,6 +835,8 @@ function configureEvents() {
   for (const [id, other] of [['cfgLeftFunction', 'cfgRightFunction'], ['cfgRightFunction', 'cfgLeftFunction']]) on(id, 'change', () => { $(other).value = $(id).value === 'presets' ? 'workflow' : 'presets'; });
   on('btnSaveSettingsModal','click',async () => {
     ensureIdle();
+    for (const id of ['cfgMaxLogCount', 'cfgRefreshIntervalMs']) if (!$(id).reportValidity()) return;
+    const monitorSettings = { maxLogCount: Number($('cfgMaxLogCount').value), refreshIntervalMs: Number($('cfgRefreshIntervalMs').value) };
     uiFontSize = Number($('cfgUiFontSize').value);
     terminalFontSize = Number($('cfgTerminalFontSize').value); clearAfterSend = $('cfgClearAfterSend').checked;
     rememberInput = $('cfgRememberInput').checked; hoverTips = $('cfgHoverTips').checked;
@@ -749,12 +846,9 @@ function configureEvents() {
     if (leftVisible !== leftDefaultVisible) $('workspaceBody').classList.toggle('hide-left', !leftVisible);
     if (rightVisible !== rightDefaultVisible) $('workspaceBody').classList.toggle('hide-right', !rightVisible);
     leftDefaultVisible = leftVisible; rightDefaultVisible = rightVisible;
-    applyTypography(); applyHoverTips(); applyPinVisibility(); applySidebarLayout(); updateViewButtons(); renderLogs(); await saveNow(); hideModal('settingsModal');
+    applyTypography(); applyHoverTips(); applyPinVisibility(); applySidebarLayout(); updateViewButtons(); renderLogs(); await saveNow(monitorSettings); hideModal('settingsModal');
   });
-  on('btnRefreshPorts','click',async () => {
-    try { renderPorts(await request('ports')); }
-    catch (error) { updatePortDetail(error.message); throw error; }
-  });
+  on('btnRefreshPorts','click',refreshPorts);
   on('selPort','change',() => { updatePortDetail(); scheduleSave(); });
   on('selBaud','change',scheduleSave);
   on('btnConnect','click',async () => {
@@ -808,9 +902,9 @@ function configureEvents() {
     }
     if (log) { await request('copy', { text: rawLogText(log) }); toast('已复制'); }
   });
-  on('manualInput','input',() => { validateInput(); scheduleSave(); });
+  on('manualInput','input',() => { scheduleValidation(); scheduleSave(); });
   for (const id of ['chkSendHex','selEnding','customEndingHex','chkLineByLine','repeatInterval']) on(id,'change',() => { validateInput(); scheduleSave(); });
-  on('btnSend','click',sendManual);
+  on('btnSend','click',() => status.run.kind === 'manual' ? request('stop') : sendManual());
   on('btnClearInput','click',() => { ensureIdle(); $('manualInput').value = ''; validateInput(); scheduleSave(); });
   on('btnFormatHex','click',async () => { closeSendTools(true); ensureIdle(); const encoded = await request('encode', { text: $('manualInput').value, hex: true, ending: 'none' }); $('manualInput').value = encoded.hex; $('chkSendHex').checked = true; validateInput(); scheduleSave(); $('manualInput').focus(); });
   on('btnAppendCrc','click',async () => {
@@ -829,7 +923,7 @@ function configureEvents() {
     if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      if (!event.repeat && !$('btnSend').disabled) await sendManual();
+      if (!event.repeat && status.run.kind === 'idle' && !$('btnSend').disabled) await sendManual();
       return;
     }
     if ((event.key === 'ArrowUp' && $('manualInput').selectionStart === 0) || (event.key === 'ArrowDown' && $('manualInput').selectionEnd === $('manualInput').value.length)) {
@@ -940,10 +1034,14 @@ function configureEvents() {
   on('exportFormat','change',() => { $('exportFileName').value = $('exportFileName').value.replace(/\.[^.]+$/, '') + '.' + $('exportFormat').value; });
   for (const id of ['btnCloseExportModal','btnCancelExportModal']) on(id,'click',() => hideModal('exportModal'));
   on('btnConfirmExport','click',async () => {
+    if (exportPending) return;
+    $('btnConfirmExport').disabled = true;
+    try {
     const rows = document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? directionLogs().filter(log => matchesSearch(log)) : logs;
     const format = $('exportFormat').value;
     const content = exportData(rows,format,{ time:$('chkExportTime').checked,hex:$('chkExportHex').checked,protocol:$('chkExportProto').checked });
-    const result = await request('export',{ format,content,fileName:$('exportFileName').value }); if (result.saved) { hideModal('exportModal'); toast('日志已导出'); }
+    const result = await exportContent(content, format, $('exportFileName').value); if (result.saved) { hideModal('exportModal'); toast('日志已导出'); }
+    } finally { $('btnConfirmExport').disabled = false; }
   });
   let dragging = false, startY = 0, startHeight = 0;
   const resizeSendBox = height => {
@@ -983,37 +1081,42 @@ function configureEvents() {
 async function initialize() {
   for (const [id, action] of [['btnPinWindow','pin'],['btnWinMin','minimize'],['btnWinMax','maximize'],['btnWinClose','close']]) {
     on(id,'click',async () => {
-      if (action === 'close') await saveNow();
       updateWindowState(await request('window', { action }));
     });
   }
   icons();
   for (const [id,icon,label] of [['btnRefreshPorts','refresh-cw','刷新串口'],['btnExportPresets','download','导出预设'],['btnImportPresets','upload','导入预设'],['btnNewPreset','plus','新建预设'],['btnSearchPrev','chevron-up','上一个匹配'],['btnSearchNext','chevron-down','下一个匹配'],['btnClearTerminal','eraser','清空终端'],['btnExportLog','download','导出日志'],['btnClearInput','eraser','清空输入']]) iconButton(id,icon,label);
   $('btnToggleProtocol').querySelector('kbd')?.remove();
-  const initial = await request('init');
+  const [initial] = await Promise.all([
+    request('init'),
+    document.fonts.load('400 12px "Sarasa Gothic SC"'),
+    document.fonts.load('700 12px "Sarasa Gothic SC"')
+  ]);
   updateWindowState(initial.window);
   if (initial.update) renderUpdate(initial.update);
   if (initial.version) { $('titlebarVersion').textContent = `v${initial.version}`; $('aboutVersion').textContent = `v${initial.version}`; }
   documentState = initial.document; documentState.history ||= [];
   savedDocument = structuredClone(documentState);
-  appendLogs(initial.logs); applyProfile(documentState.profile); renderPorts(initial.ports,true); restoreUi();
+  applyProfile(documentState.profile); renderPorts(initial.ports,true); restoreUi(); appendLogs(initial.logs);
   initialized = true;
-  configureEvents(); configureTooltips(); configureSendTools(); renderPresets(); renderWorkflow(); updateStatus(initial.status); renderLogs(); validateInput(); icons();
-  document.fonts.ready.then(() => { logView?.invalidate(); logView?.schedule(); });
+  configureEvents(); configureTooltips(); configureSendTools(); renderPresets(); renderWorkflow(); updateStatus(initial.status); renderLogs(); icons();
   const resize = new ResizeObserver(() => {
     const root = document.documentElement;
     root.style.setProperty('--send-min-h', `${document.querySelector('.send-options-row').offsetHeight + document.querySelector('.send-bottom-bar').offsetHeight + 40}px`);
     root.style.setProperty('--terminal-bar-h', `${document.querySelector('.terminal-bar').offsetHeight}px`);
   });
   for (const selector of ['.send-options-row', '.send-bottom-bar', '.terminal-bar']) resize.observe(document.querySelector(selector));
+  await validateInput();
+  await document.fonts.ready;
+  logView?.invalidate(); logView?.paint();
+  // Let font metrics, resize observers and the first painted frame settle before revealing the window.
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   if (initial.portError) { updatePortDetail(initial.portError); toast('读取串口列表失败：' + initial.portError); }
   document.body.dataset.ready = 'true';
+  await request('ready');
   setInterval(async () => {
-    if (status.connected || refreshPending || document.activeElement === $('selPort')) return;
-    refreshPending = true;
-    try { const list = await request('ports'); if (JSON.stringify(list) !== JSON.stringify(ports)) renderPorts(list); else updatePortDetail(); }
-    catch (error) { updatePortDetail(error.message); }
-    finally { refreshPending = false; }
+    if (status.connected) return;
+    await refreshPorts();
   }, 2000);
 }
 
@@ -1026,5 +1129,20 @@ window.chrome?.webview.addEventListener('message',event => {
   else if (message.event === 'status' && initialized) updateStatus(message.data);
   else if (message.event === 'window') updateWindowState(message.data);
   else if (message.event === 'update') renderUpdate(message.data);
+  else if (message.event === 'closing') {
+    closePending = true;
+    clearTimeout(saveTimer); clearTimeout(validationTimer); validationVersion++;
+    document.body.inert = true;
+    (async () => {
+      try { await saveNow({}, true); await request('closeReady', { id: message.data.id }); }
+      catch (error) { await request('closeReady', { id: message.data.id, error: error.message }); }
+    })().catch(error => toast(error.message));
+  } else if (message.event === 'closeCancelled') {
+    closePending = false; document.body.inert = false; toast(message.data.error);
+  }
 });
-initialize().catch(error => { toast(error.message); document.body.dataset.error = error.message; });
+initialize().catch(error => {
+  delete document.body.dataset.ready;
+  toast(error.message); document.body.dataset.error = error.message;
+  request('startupError', { message: error.message }).catch(() => {});
+});

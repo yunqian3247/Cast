@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using cast.Core;
@@ -7,18 +8,25 @@ namespace cast.Desktop;
 
 public sealed class AppService : IAsyncDisposable
 {
-    public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     private readonly ISerialConnection _connection;
     private readonly IPortCatalog _catalog;
-    private readonly JsonFileStore<AppDocument> _store = new(Json);
+    private readonly JsonFileStore<AppDocument> _store = new(Json, static document => document.Validate());
     private readonly string _path;
     private readonly string? _legacyPath;
     private readonly SemaphoreSlim _sendGate = new(1, 1);
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly SemaphoreSlim _documentGate = new(1, 1);
     private readonly object _sync = new();
-    public const int MaxLogCount = 10000;
+    private readonly object _changeSync = new();
+    private readonly object _portSync = new();
+    private Task<IReadOnlyList<PortInfo>>? _portScan;
     public const long MaxLogTextBytes = 16 * 1024 * 1024;
+    private MonitorSettings _monitorSettings = new();
+    public MonitorSettings MonitorSettings => Volatile.Read(ref _monitorSettings);
     private readonly Queue<AppLog> _logs = new();
     private long _logTextBytes;
     public static long LogTextBytes(AppLog log) => 2L * (log.Text.Length + log.Hex.Length);
@@ -50,7 +58,7 @@ public sealed class AppService : IAsyncDisposable
         {
             if (_legacyPath is not null) await LegacyDataMigration.MigrateAsync(_legacyPath, _path);
             var saved = await _store.LoadAsync(_path);
-            if (saved is not null) { saved.Validate(); Document = saved; }
+            if (saved is not null) { saved.Validate(); Document = saved; ApplyMonitorSettings(saved); }
         }
         catch (Exception ex) when (ex is IOException or FormatException or JsonException)
         {
@@ -59,9 +67,17 @@ public sealed class AppService : IAsyncDisposable
         AddLog("SYS", "cast 已就绪", [], "系统");
     }
 
-    public IReadOnlyList<PortInfo> GetPorts() => _catalog.Enumerate();
+    public Task<IReadOnlyList<PortInfo>> GetPortsAsync()
+    {
+        lock (_portSync)
+        {
+            // Share an active native scan between refresh and connection requests.
+            if (_portScan is null || _portScan.IsCompleted) _portScan = Task.Run(_catalog.Enumerate);
+            return _portScan;
+        }
+    }
 
-    public async Task SaveAsync(AppDocument document)
+    public async Task SaveAsync(AppDocument document, bool closing = false)
     {
         document.Validate();
         var snapshot = JsonSerializer.Deserialize<AppDocument>(JsonSerializer.Serialize(document, Json), Json)!;
@@ -70,15 +86,31 @@ public sealed class AppService : IAsyncDisposable
         {
             lock (_sync)
             {
-                if (_run.Kind != "idle") throw new InvalidOperationException("运行期间请先停止任务再保存编辑");
+                if (!closing && _run.Kind != "idle") throw new InvalidOperationException("运行期间请先停止任务再保存编辑");
                 if (_disposed) throw new InvalidOperationException("cast 正在关闭");
                 _saving = true;
                 if (_connection.State == SerialConnectionState.Open) snapshot.Profile = Document.Profile;
             }
             await _store.SaveAsync(_path, snapshot);
             Document = snapshot;
+            ApplyMonitorSettings(snapshot);
         }
         finally { lock (_sync) _saving = false; _documentGate.Release(); }
+    }
+
+    private void ApplyMonitorSettings(AppDocument document)
+    {
+        lock (_sync)
+        {
+            Volatile.Write(ref _monitorSettings, MonitorSettings.FromUi(document.Ui));
+            TrimLogs();
+        }
+    }
+
+    private void TrimLogs()
+    {
+        while (_logs.Count > _monitorSettings.MaxLogCount || (_logTextBytes > MaxLogTextBytes && _logs.Count > 1))
+            _logTextBytes -= LogTextBytes(_logs.Dequeue());
     }
 
     public static void ValidateProfile(SerialProfile profile, bool requirePort = true)
@@ -93,11 +125,14 @@ public sealed class AppService : IAsyncDisposable
     {
         ValidateProfile(profile);
         await _lifecycle.WaitAsync();
+        await _documentGate.WaitAsync();
         try
         {
             if (_disposed || _disconnecting || _transportUnavailable) throw new InvalidOperationException("串口正在关闭或驱动尚未释放，请重新启动 cast");
             if (_connection.State == SerialConnectionState.Open) throw new InvalidOperationException("请先关闭当前串口");
-            var port = GetPorts().FirstOrDefault(p => p.PortName.Equals(profile.PortName, StringComparison.OrdinalIgnoreCase)
+            var ports = await GetPortsAsync();
+            if (_disposed || _disconnecting || _transportUnavailable) throw new InvalidOperationException("cast 正在关闭或串口不可用");
+            var port = ports.FirstOrDefault(p => p.PortName.Equals(profile.PortName, StringComparison.OrdinalIgnoreCase)
                 && (profile.DeviceInstanceId is null || p.DeviceInstanceId == profile.DeviceInstanceId));
             if (port is null) throw new InvalidOperationException("串口已移除或硬件已更换，请刷新后重新选择");
             profile.DeviceInstanceId = port.DeviceInstanceId;
@@ -110,7 +145,7 @@ public sealed class AppService : IAsyncDisposable
             try { await _store.SaveAsync(_path, Document); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { AddLog("SYS", "串口已连接，保存参数失败：" + ex.Message, [], "配置"); }
         }
-        finally { _lifecycle.Release(); PublishStatus(); }
+        finally { _documentGate.Release(); _lifecycle.Release(); PublishStatus(); }
     }
 
     public async Task DisconnectAsync()
@@ -145,13 +180,46 @@ public sealed class AppService : IAsyncDisposable
             Document.Profile.Encoding, ending, request.CustomEnding);
     }
 
+    public const int MaxSendChars = 1_048_576;
+    public const int MaxSendLines = 100_000;
+    public const int MaxSendBytes = 4 * 1024 * 1024;
+
+    private static string[] SendParts(SendRequest request)
+    {
+        if (request.Text is null || request.Text.Length > MaxSendChars || request.CustomEnding is null || request.CustomEnding.Length > MaxSendChars)
+            throw new FormatException("发送内容或后缀超过 1 Mi 字符");
+        if (request.Lines && request.Text.Count(c => c == '\n') >= MaxSendLines)
+            throw new FormatException("逐行发送最多 100000 行");
+        return request.Lines ? request.Text.Replace("\r\n", "\n").Split('\n') : [request.Text];
+    }
+
+    private IEnumerable<byte[]> EncodeFrames(SendRequest request)
+    {
+        var parts = SendParts(request);
+        long total = 0;
+        for (var index = 0; index < parts.Length; index++)
+        {
+            if (request.Lines && parts[index].Length == 0) continue;
+            byte[] bytes;
+            try { bytes = Encode(request with { Text = parts[index], Lines = false }).Bytes; }
+            catch (PayloadEncodeException ex) when (request.Lines)
+            { throw new PayloadEncodeException(ex.ErrorCode, $"第 {index + 1} 行：{ex.Message}", ex); }
+            total += bytes.Length;
+            if (total > MaxSendBytes) throw new FormatException("本次发送的编码总量超过 4 MiB");
+            yield return bytes;
+        }
+    }
+
+    public SendPreview Preview(SendRequest request)
+    {
+        var total = EncodeFrames(request).Sum(bytes => (long)bytes.Length);
+        return new(request.Text.Length == 0 ? 0 : request.Text.Count(c => c == '\n') + 1, total);
+    }
+
     private byte[][] Prepare(SendRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Text)) throw new FormatException("请输入发送内容");
-        return request.Lines
-            ? request.Text.Replace("\r\n", "\n").Split('\n').Where(line => line.Length > 0)
-                .Select(line => Encode(request with { Text = line, Lines = false }).Bytes).ToArray()
-            : [Encode(request).Bytes];
+        return EncodeFrames(request).ToArray();
     }
 
     public async Task SendAsync(SendRequest request)
@@ -191,11 +259,18 @@ public sealed class AppService : IAsyncDisposable
         if (mode is not ("once" or "loop" or "count")) throw new FormatException("工作流运行模式无效");
         if (!Document.Workflows.TryGetValue(id, out var workflow) || workflow.Steps.Count == 0)
             throw new InvalidOperationException("工作流无可用步骤");
+        var encodedPresets = new Dictionary<string, (string Name, byte[] Bytes)>(StringComparer.Ordinal);
         var steps = workflow.Steps.Select(step =>
         {
-            var preset = Document.Presets.FirstOrDefault(p => p.Id == step.PresetId)
-                ?? throw new InvalidOperationException("工作流引用的预设已删除");
-            return (Name: preset.Name, Bytes: Encode(new(preset.Content, preset.Format == "hex", preset.Format == "hex" ? "none" : "crlf")).Bytes, Wait: step.Wait);
+            if (!encodedPresets.TryGetValue(step.PresetId, out var encoded))
+            {
+                var preset = Document.Presets.FirstOrDefault(p => p.Id == step.PresetId)
+                    ?? throw new InvalidOperationException("工作流引用的预设已删除");
+                encoded = (preset.Name, Encode(new(preset.Content, preset.Format == "hex", preset.Format == "hex" ? "none" : "crlf")).Bytes);
+                encodedPresets.Add(step.PresetId, encoded);
+            }
+
+            return (Name: encoded.Name, Bytes: encoded.Bytes, Wait: step.Wait);
         }).ToArray();
         Claim("workflow", workflow.Name);
         var token = _runCancellation!.Token;
@@ -285,7 +360,8 @@ public sealed class AppService : IAsyncDisposable
         try
         {
             token.ThrowIfCancellationRequested();
-            await Observe(_connection.SendAsync(bytes, token)).WaitAsync(TimeSpan.FromSeconds(30), token);
+            var deadline = SerialWriteTiming.GetTimeout(bytes.Length, Document.Profile) + TimeSpan.FromSeconds(3);
+            await Observe(_connection.SendAsync(bytes, token)).WaitAsync(deadline, token);
             Interlocked.Add(ref _tx, bytes.Length);
             AddLog("TX", TextCodec.Decode(bytes, Document.Profile.Encoding), bytes, source);
             PublishStatus();
@@ -308,9 +384,13 @@ public sealed class AppService : IAsyncDisposable
         string text;
         lock (_sync)
         {
-            var chars = new char[TextCodec.GetEncoding(Document.Profile.Encoding).GetMaxCharCount(e.Bytes.Length)];
-            var count = _decoder.GetChars(e.Bytes, 0, e.Bytes.Length, chars, 0, false);
-            text = new string(chars, 0, count);
+            var chars = ArrayPool<char>.Shared.Rent(TextCodec.GetEncoding(Document.Profile.Encoding).GetMaxCharCount(e.Bytes.Length));
+            try
+            {
+                var count = _decoder.GetChars(e.Bytes, 0, e.Bytes.Length, chars, 0, false);
+                text = new string(chars, 0, count);
+            }
+            finally { ArrayPool<char>.Shared.Return(chars); }
         }
         Interlocked.Add(ref _rx, e.Bytes.Length);
         AddLog("RX", text, e.Bytes, "串口", e.Timestamp);
@@ -332,19 +412,31 @@ public sealed class AppService : IAsyncDisposable
 
     private void AddLog(string direction, string text, byte[] bytes, string source, DateTimeOffset? timestamp = null)
     {
-        var entry = new AppLog(Interlocked.Increment(ref _logId), timestamp ?? DateTimeOffset.Now,
-            direction, text, HexCodec.Format(bytes), bytes.Length, source);
-        lock (_sync)
+        var hex = HexCodec.Format(bytes);
+        // Commit the queue entry and its notification together. This keeps the
+        // UI delivery order equal to the backend log order under concurrent RX/TX.
+        lock (_changeSync)
         {
-            _logs.Enqueue(entry);
-            _logTextBytes += LogTextBytes(entry);
-            while (_logs.Count > MaxLogCount || (_logTextBytes > MaxLogTextBytes && _logs.Count > 1))
-                _logTextBytes -= LogTextBytes(_logs.Dequeue());
+            AppLog entry;
+            lock (_sync)
+            {
+                entry = new AppLog(++_logId, timestamp ?? DateTimeOffset.Now,
+                    direction, text, hex, bytes.Length, source);
+                _logs.Enqueue(entry);
+                _logTextBytes += LogTextBytes(entry);
+                TrimLogs();
+            }
+            Changed?.Invoke("log", entry);
         }
-        Changed?.Invoke("log", entry);
     }
 
-    public void ClearLogs() { lock (_sync) { _logs.Clear(); _logTextBytes = 0; } }
+    public void ClearLogs()
+    {
+        lock (_changeSync)
+        {
+            lock (_sync) { _logs.Clear(); _logTextBytes = 0; }
+        }
+    }
     public void ResetStats() { Interlocked.Exchange(ref _tx, 0); Interlocked.Exchange(ref _rx, 0); PublishStatus(); }
     public AppStatus Status()
     {

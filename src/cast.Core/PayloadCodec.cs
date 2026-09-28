@@ -29,7 +29,8 @@ public static class PayloadCodec
             bytes = mode == DataMode.Hex
                 ? HexCodec.Parse(value)
                 : TextCodec.Encode(value, encoding);
-            bytes = [.. bytes, .. EncodeLineEnding(lineEnding, customLineEndingHex)];
+            var ending = EncodeLineEnding(lineEnding, customLineEndingHex);
+            if (ending.Length > 0) bytes = [.. bytes, .. ending];
         }
         catch (HexParseException ex)
         {

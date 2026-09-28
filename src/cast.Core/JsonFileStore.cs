@@ -5,14 +5,16 @@ namespace cast.Core;
 public sealed class JsonFileStore<T> where T : class
 {
     private readonly JsonSerializerOptions _options;
+    private readonly Action<T>? _validate;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public JsonFileStore(JsonSerializerOptions? options = null)
+    public JsonFileStore(JsonSerializerOptions? options = null, Action<T>? validate = null)
     {
         _options = options ?? new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             WriteIndented = true
         };
+        _validate = validate;
     }
 
     public async Task<T?> LoadAsync(string path, CancellationToken cancellationToken = default)
@@ -23,7 +25,9 @@ public sealed class JsonFileStore<T> where T : class
         {
             if (!File.Exists(fullPath))
             {
-                return null;
+                if (!File.Exists(fullPath + ".bak")) return null;
+                try { return await ReadAsync(fullPath + ".bak", cancellationToken).ConfigureAwait(false); }
+                catch (Exception ex) when (IsDataException(ex)) { throw new JsonFileStoreException(fullPath, ex); }
             }
 
             try
@@ -62,6 +66,7 @@ public sealed class JsonFileStore<T> where T : class
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            _validate?.Invoke(value);
             // Serialize while holding the gate so a burst of UI saves preserves
             // invocation order and never writes a stale snapshot after a newer one.
             var payload = JsonSerializer.SerializeToUtf8Bytes(value, _options);
@@ -83,7 +88,11 @@ public sealed class JsonFileStore<T> where T : class
 
                 if (File.Exists(fullPath))
                 {
-                    File.Copy(fullPath, backupPath, overwrite: true);
+                    var valid = true;
+                    try { await ReadAsync(fullPath, cancellationToken).ConfigureAwait(false); }
+                    catch (Exception ex) when (IsDataException(ex)) { valid = false; }
+                    if (valid) File.Copy(fullPath, backupPath, overwrite: true);
+                    else File.Copy(fullPath, fullPath + $".corrupt-{DateTimeOffset.Now:yyyyMMddHHmmss}-{Guid.NewGuid():N}", overwrite: false);
                 }
 
                 File.Move(tempPath, fullPath, overwrite: true);
@@ -105,12 +114,14 @@ public sealed class JsonFileStore<T> where T : class
     private async Task<T> ReadAsync(string path, CancellationToken cancellationToken)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, useAsync: true);
-        return await JsonSerializer.DeserializeAsync<T>(stream, _options, cancellationToken).ConfigureAwait(false)
+        var value = await JsonSerializer.DeserializeAsync<T>(stream, _options, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("JSON 文件为空");
+        _validate?.Invoke(value);
+        return value;
     }
 
     private static bool IsDataException(Exception exception) =>
-        exception is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or NotSupportedException;
+        exception is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or NotSupportedException or FormatException;
 }
 
 public sealed class JsonFileStoreException : IOException

@@ -92,8 +92,29 @@ public static class HexCodec
 
     public static string Format(ReadOnlySpan<byte> bytes, string separator = " ")
     {
-        return string.Join(separator, bytes.ToArray().Select(static b => b.ToString("X2")));
+        if (bytes.IsEmpty) return string.Empty;
+        separator ??= string.Empty;
+        var data = bytes.ToArray();
+        var length = checked(data.Length * 2 + (data.Length - 1) * separator.Length);
+        return string.Create(length, (data, separator), static (destination, state) =>
+        {
+            var offset = 0;
+            for (var index = 0; index < state.data.Length; index++)
+            {
+                if (index > 0)
+                {
+                    state.separator.AsSpan().CopyTo(destination[offset..]);
+                    offset += state.separator.Length;
+                }
+
+                var value = state.data[index];
+                destination[offset++] = GetHexDigit(value >> 4);
+                destination[offset++] = GetHexDigit(value & 0x0F);
+            }
+        });
     }
+
+    private static char GetHexDigit(int value) => (char)(value < 10 ? '0' + value : 'A' + value - 10);
 
     private static int HexValue(char c) => c switch
     {

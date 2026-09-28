@@ -15,10 +15,10 @@ public static class LegacyDataMigration
 
     public static async Task MigrateAsync(string legacyPath, string targetPath)
     {
-        if (File.Exists(targetPath)) return;
+        if (File.Exists(targetPath) || File.Exists(targetPath + ".bak")) return;
         var sourcePath = File.Exists(legacyPath) ? legacyPath : legacyPath + ".bak";
         if (!File.Exists(sourcePath)) return;
-        var store = new JsonFileStore<AppDocument>(AppService.Json);
+        var store = new JsonFileStore<AppDocument>(AppService.Json, static document => document.Validate());
         var document = await store.LoadAsync(sourcePath);
         if (document is null) return;
         document.Validate();

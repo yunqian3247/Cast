@@ -61,7 +61,8 @@ export async function verifyUpdates(page, output) {
   await page.evaluate(() => { hostMock.failSave = false; theme = 'light'; applyAppearance(); });
   await page.click('#btnInstallUpdate');
   await page.waitForFunction(() => document.getElementById('updateStatus').textContent.includes('正在安装'));
-  assert.equal(await page.evaluate(() => hostMock.requests.filter(request => request.command === 'updateInstall').at(-1).data.version), 1);
+  assert.equal(await page.evaluate(() => hostMock.requests.filter(request => request.command === 'updateInstall').at(-1).data.useSavedDocument), true);
+  assert.equal(await page.evaluate(() => hostMock.document.version), 1);
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('body').innerText().then(text => text.includes('工作台') || text.includes('SerialDebugTool')), false);
   console.log('PASS: update configuration, check, progress, retry, save failure, busy guard, restart and two-theme layouts');

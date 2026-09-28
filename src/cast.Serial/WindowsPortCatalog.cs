@@ -53,13 +53,26 @@ internal static class WindowsPortCatalog
         var handle = SetupDiOpenDevRegKey(devices, ref device, globalScope, 0, deviceKey, queryValue);
         if (handle == new IntPtr(-1)) return null;
         using var safeHandle = new SafeRegistryHandle(handle, ownsHandle: true);
-        using var key = RegistryKey.FromHandle(safeHandle);
-        if (key.GetValue("PortName") is not string value) return null;
-        var name = value.Split('\0', 2)[0].Trim();
-        if (!name.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || name.Length <= 3) return null;
-        foreach (var digit in name.AsSpan(3))
-            if (digit is < '0' or > '9') return null;
-        return name.ToUpperInvariant();
+        try
+        {
+            using var key = RegistryKey.FromHandle(safeHandle);
+            return key.GetValue("PortName") is string value ? SerialPortCatalog.NormalizeWindowsPortName(value) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // A device may disappear or deny registry access during enumeration.
+            return null;
+        }
+    }
+
+    internal static bool IsPortPresent(string name)
+    {
+        var buffer = new StringBuilder(512);
+        if (QueryDosDeviceW(name, buffer, (uint)buffer.Capacity) != 0) return true;
+        var error = Marshal.GetLastWin32Error();
+        if (error == InsufficientBuffer) return true;
+        if (error == 2) return false;
+        throw new Win32Exception(error);
     }
 
     private static string? ReadProperty(IntPtr devices, ref DeviceInfoData device, uint property)
@@ -110,4 +123,7 @@ internal static class WindowsPortCatalog
     [DllImport("setupapi.dll", ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetupDiDestroyDeviceInfoList(IntPtr devices);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern uint QueryDosDeviceW(string name, StringBuilder target, uint size);
 }

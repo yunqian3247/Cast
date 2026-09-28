@@ -103,6 +103,20 @@ public sealed class WebViewTests
                     await Task.Delay(250);
                     Assert.Equal("1", await form.Browser.ExecuteScriptAsync("logs.length"));
                     Assert.Equal("\"AFTER-CLEAR\"", await form.Browser.ExecuteScriptAsync("logs[0].text"));
+                    await form.Browser.ExecuteScriptAsync("document.getElementById('btnOpenSettings').click();document.getElementById('cfgMaxLogCount').value='100';document.getElementById('cfgRefreshIntervalMs').value='200';document.getElementById('btnSaveSettingsModal').click();");
+                    await AppServiceTests.Wait(() => form.Service.MonitorSettings == new MonitorSettings(100, 200));
+                    var settingsTimeout = System.Diagnostics.Stopwatch.StartNew();
+                    while (await form.Browser.ExecuteScriptAsync("document.getElementById('settingsModal').classList.contains('show')") == "true")
+                    {
+                        Assert.True(settingsTimeout.Elapsed < TimeSpan.FromSeconds(5), "Monitor settings save timed out");
+                        await Task.Delay(20);
+                    }
+                    for (var i = 0; i < 150; i++) connection.Receive(System.Text.Encoding.ASCII.GetBytes($"LIMIT-{i:D3}"));
+                    Assert.Equal(100, form.Service.Logs.Count);
+                    await Task.Delay(600);
+                    Assert.Equal("100", await form.Browser.ExecuteScriptAsync("logs.length"));
+                    Assert.Equal("\"LIMIT-149\"", await form.Browser.ExecuteScriptAsync("logs.at(-1).text"));
+                    Assert.Equal("200", await form.Browser.ExecuteScriptAsync("refreshIntervalMs"));
                     var output = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../artifacts/pebrel-checks"));
                     Directory.CreateDirectory(output);
                     await form.Browser.ExecuteScriptAsync("document.getElementById('btnToggleRight').click();");

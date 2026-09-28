@@ -209,7 +209,7 @@
 
             <div class="send-bottom-right">
               <button id="btnClearInput" aria-label="清空输入框">清空</button>
-              <button class="btn-send" id="btnSend"><i data-lucide="send"></i>发送</button>
+              <button class="btn-send" id="btnSend"><i data-lucide="send"></i><span id="btnSendLabel">发送</span></button>
             </div>
           </div>
         </div>
@@ -475,6 +475,8 @@
     <div class="preferences-grid">
       <div class="form-item"><label for="cfgUiFontSize">界面字号</label><select id="cfgUiFontSize"><option value="11">11px</option><option value="12">12px</option><option value="13">13px</option><option value="14">14px</option><option value="16">16px</option></select></div>
       <div class="form-item"><label for="cfgTerminalFontSize">监控与输入字号</label><select id="cfgTerminalFontSize"><option value="11">11px</option><option value="12">12px</option><option value="13">13px</option><option value="14">14px</option><option value="16">16px</option><option value="18">18px</option><option value="20">20px</option></select></div>
+      <div class="form-item"><label for="cfgMaxLogCount">最大保留记录数</label><input type="number" id="cfgMaxLogCount" min="100" max="100000" step="1" value="10000" required></div>
+      <div class="form-item"><label for="cfgRefreshIntervalMs">界面刷新间隔 (ms)</label><input type="number" id="cfgRefreshIntervalMs" min="20" max="1000" step="1" value="50" required></div>
     </div>
     <div class="preferences-sidebars">
       <div class="preference-sidebar"><label for="cfgLeftFunction">左侧功能</label><select id="cfgLeftFunction"><option value="presets">预设指令</option><option value="workflow">工作流</option></select><label class="preference-check"><input type="checkbox" id="cfgLeftDefaultVisible">启动时显示</label></div>
@@ -517,11 +519,11 @@
       <progress id="updateProgress" max="100" value="0" aria-label="更新下载进度" hidden></progress>
       <p id="updateRestartNotice" hidden>安装将关闭串口并重启应用，当前通信记录会清空。</p>
       <p id="updateError" class="form-error" role="alert"></p>
-      <div class="update-actions">
-        <button id="btnCheckUpdate" disabled><i data-lucide="refresh-cw"></i><span>检查更新</span></button>
-        <button id="btnDownloadUpdate" hidden><i data-lucide="download"></i><span>下载更新</span></button>
-        <button id="btnInstallUpdate" class="btn-primary" hidden><i data-lucide="rotate-cw"></i><span>安装并重启</span></button>
-      </div>
+    </div>
+    <div class="update-actions">
+      <button id="btnCheckUpdate" disabled><i data-lucide="refresh-cw"></i><span>检查更新</span></button>
+      <button id="btnDownloadUpdate" hidden><i data-lucide="download"></i><span>下载更新</span></button>
+      <button id="btnInstallUpdate" class="btn-primary" hidden><i data-lucide="rotate-cw"></i><span>安装并重启</span></button>
     </div>
   </div>
 </div>

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json.Nodes;
 using cast.Core;
 using cast.Desktop;
 using cast.Serial;
@@ -11,6 +12,65 @@ namespace cast.Desktop.Tests;
 
 public sealed class AppServiceTests
 {
+    [Fact]
+    public async Task MonitorSettingsPersistTrimExistingLogsAndAllowHigherRetention()
+    {
+        await using var fixture = await Fixture.Create();
+        Assert.Equal(new MonitorSettings(), fixture.Service.MonitorSettings);
+        fixture.Service.ClearLogs();
+        for (var i = 0; i < 250; i++) fixture.Connection.Receive([65]);
+        var lastId = fixture.Service.Logs[^1].Id;
+        var document = new AppDocument { Ui = new() { ["maxLogCount"] = 100, ["refreshIntervalMs"] = 200 } };
+        await fixture.Service.SaveAsync(document);
+        Assert.Equal(100, fixture.Service.Logs.Count);
+        Assert.Equal(lastId - 99, fixture.Service.Logs[0].Id);
+        fixture.Connection.Receive([66]);
+        Assert.Equal(100, fixture.Service.Logs.Count);
+        Assert.Equal("B", fixture.Service.Logs[^1].Text);
+        await using var reloaded = new AppService(fixture.Directory, new FakeConnection(), new FakeCatalog());
+        await reloaded.InitializeAsync();
+        Assert.Equal(new MonitorSettings(100, 200), reloaded.MonitorSettings);
+
+        document.Ui["maxLogCount"] = 20000;
+        await fixture.Service.SaveAsync(document);
+        fixture.Service.ClearLogs();
+        for (var i = 0; i < 12000; i++) fixture.Connection.Receive([65]);
+        Assert.Equal(12000, fixture.Service.Logs.Count);
+    }
+
+    [Theory]
+    [InlineData("maxLogCount", "99")]
+    [InlineData("maxLogCount", "100001")]
+    [InlineData("maxLogCount", "100.5")]
+    [InlineData("maxLogCount", "\"1000\"")]
+    [InlineData("refreshIntervalMs", "19")]
+    [InlineData("refreshIntervalMs", "1001")]
+    [InlineData("refreshIntervalMs", "50.5")]
+    [InlineData("refreshIntervalMs", "null")]
+    public async Task InvalidMonitorSettingsKeepCurrentConfigurationAndLogs(string key, string json)
+    {
+        await using var fixture = await Fixture.Create();
+        var count = fixture.Service.Logs.Count;
+        var document = new AppDocument();
+        document.Ui[key] = JsonNode.Parse(json);
+        await Assert.ThrowsAsync<FormatException>(() => fixture.Service.SaveAsync(document));
+        Assert.Equal(new MonitorSettings(), fixture.Service.MonitorSettings);
+        Assert.Equal(count, fixture.Service.Logs.Count);
+    }
+
+    [Fact]
+    public async Task FailedMonitorSettingsSavePreservesRetentionAndLogs()
+    {
+        await using var fixture = await Fixture.Create();
+        for (var i = 0; i < 250; i++) fixture.Connection.Receive([65]);
+        var count = fixture.Service.Logs.Count;
+        System.IO.Directory.CreateDirectory(Path.Combine(fixture.Directory, "cast.json.tmp"));
+        var document = new AppDocument { Ui = new() { ["maxLogCount"] = 100, ["refreshIntervalMs"] = 1000 } };
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => fixture.Service.SaveAsync(document));
+        Assert.Equal(new MonitorSettings(), fixture.Service.MonitorSettings);
+        Assert.Equal(count, fixture.Service.Logs.Count);
+    }
+
     [Fact]
     public async Task LogRetentionBoundsCountAndTextBytesAndClearsBudget()
     {

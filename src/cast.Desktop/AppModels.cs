@@ -6,6 +6,8 @@ namespace cast.Desktop;
 
 public sealed class AppDocument
 {
+    public const int MaxSerializedChars = 64 * 1024 * 1024;
+    private static readonly JsonSerializerOptions CapacityJson = new(AppService.Json) { WriteIndented = false };
     public int Version { get; set; } = 1;
     public SerialProfile Profile { get; set; } = new() { LineEnding = LineEndingMode.CrLf };
     public List<CommandPreset> Presets { get; set; } = [];
@@ -35,7 +37,25 @@ public sealed class AppDocument
                     throw new FormatException("工作流步骤无效");
         }
         if (History.Any(value => value is null || value.Length > 1_048_576)) throw new FormatException("发送历史无效");
+        _ = MonitorSettings.FromUi(Ui);
         AppService.ValidateProfile(Profile, requirePort: false);
+        if (JsonSerializer.Serialize(this, CapacityJson).Length > MaxSerializedChars)
+            throw new FormatException("应用配置超过 64 Mi 字符，请减少预设内容或发送历史");
+    }
+}
+
+public sealed record MonitorSettings(int MaxLogCount = 10000, int RefreshIntervalMs = 50)
+{
+    public static MonitorSettings FromUi(JsonObject ui) => new(
+        ReadInteger(ui, "maxLogCount", 10000, 100, 100000, "最大保留记录数"),
+        ReadInteger(ui, "refreshIntervalMs", 50, 20, 1000, "界面刷新间隔"));
+
+    private static int ReadInteger(JsonObject ui, string key, int fallback, int min, int max, string label)
+    {
+        if (!ui.TryGetPropertyValue(key, out var node)) return fallback;
+        if (node is JsonValue value && value.TryGetValue<int>(out var number) && number >= min && number <= max)
+            return number;
+        throw new FormatException($"{label}须为 {min}～{max} 的整数");
     }
 }
 
@@ -89,6 +109,7 @@ public sealed class CommandStep
 }
 
 public sealed record SendRequest(string Text, bool Hex = false, string Ending = "crlf", string CustomEnding = "", bool Lines = false);
+public sealed record SendPreview(int LineCount, long ByteCount);
 public sealed record AppLog(long Id, DateTimeOffset Timestamp, string Dir, string Text, string Hex, int ByteCount, string Source);
 public sealed record RunStatus(string Kind, bool Paused, int Step, int Round, string Name);
 public sealed record AppStatus(bool Connected, string Port, long Tx, long Rx, RunStatus Run, Serial.SerialPinState? Pins, string? PinError);

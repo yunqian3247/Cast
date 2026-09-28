@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using System.Drawing.Text;
 using System.Reflection;
@@ -13,6 +12,8 @@ namespace cast.Desktop;
 public sealed class MainForm : Form
 {
     private const string PageUrl = "https://cast.example/index.html";
+    private const int MaxBridgeMessageChars = 4_194_304;
+    private const long MaxEventBatchBytes = 512 * 1024;
     private static readonly Icon AppIcon = new(typeof(MainForm), "Assets.cast.ico");
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
     private readonly AppService _service;
@@ -20,6 +21,9 @@ public sealed class MainForm : Form
     private readonly string _directory;
     private readonly System.Windows.Forms.Timer _poll = new() { Interval = 750 };
     private readonly System.Windows.Forms.Timer _events = new() { Interval = 50 };
+    private readonly System.Windows.Forms.Timer _startupTimeout = new() { Interval = 120000 };
+    private static readonly JsonSerializerOptions BridgeJson = new(JsonSerializerDefaults.Web);
+    private Task<IReadOnlyList<PortInfo>>? _startupPorts;
     private readonly object _eventSync = new();
     private readonly Queue<AppLog> _pendingLogs = new();
     private long _pendingLogBytes, _lastLogSentId;
@@ -27,17 +31,29 @@ public sealed class MainForm : Form
     private readonly Label _loading = new() { Dock = DockStyle.Fill, Text = "正在打开cast", TextAlign = ContentAlignment.MiddleCenter, UseCompatibleTextRendering = true };
     private readonly PrivateFontCollection _loadingFonts = new();
     private readonly Font _loadingFont;
+    private StartupSplash? _startupSplash;
     private bool _ready, _closing, _closed, _restartRequested;
+    private bool _pageInitialized, _pageReady, _navigationCompleted, _startupFailed;
+    private bool _preparingPage, _startupFramePrepared;
+    private int _pageGeneration;
     private bool _nativeNonNormal;
+    private LogExportSession? _export;
+    private bool _exportOpening, _closePending;
+    private readonly DocumentSaveBuffer _documentTransfer = new();
+    private TaskCompletionSource<string?>? _closeResult;
+    private string? _closeId;
     public WebView2 Browser => _web;
     public AppService Service => _service;
     public bool Ready => _ready;
+    internal StartupSplash? StartupAnimation => _startupSplash;
+    internal bool StartupFramePrepared => _startupFramePrepared;
 
     public MainForm(string? dataDirectory = null, ISerialConnection? connection = null, IPortCatalog? catalog = null)
     {
         _loadingFonts.AddFontFile(Path.Combine(AppContext.BaseDirectory, "Web", "fonts", "SarasaGothicSC-Regular.ttf"));
         _loadingFont = new Font(_loadingFonts.Families[0], 9F);
         _loading.Font = _loadingFont;
+        Opacity = 0;
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _directory = dataDirectory ?? Path.Combine(localAppData, "cast", "Data");
         _service = new(_directory, connection, catalog, dataDirectory is null ? LegacyDataMigration.SettingsPath(localAppData) : null);
@@ -53,21 +69,50 @@ public sealed class MainForm : Form
         BackColor = Color.White;
         Controls.Add(_web);
         Controls.Add(_loading);
+        _loading.BringToFront();
         _service.Changed += OnServiceChanged;
-        Shown += async (_, _) => await InitializeAsync();
+        Shown += async (_, _) =>
+        {
+            _startupSplash = new(AppIcon, _loadingFont);
+            _startupSplash.CloseRequested += (_, _) => Close();
+            await InitializeAsync();
+        };
         _poll.Tick += (_, _) => { if (_ready && !_closing) _service.PublishStatus(); };
         _events.Tick += (_, _) => FlushEvents();
+        _startupTimeout.Tick += (_, _) => FailStartup("cast 初始化超时，请关闭后重试。");
         Resize += (_, _) => { if (_ready) Post(new { @event = "window", data = WindowStatus() }); };
         FormClosing += async (_, e) =>
         {
             if (_closed) return;
             e.Cancel = true;
-            if (_closing) return;
+            if (_closePending || _closing) return;
+            _closePending = true;
+            _service.Stop();
+            try
+            {
+                if (_ready && !_restartRequested)
+                {
+                    _closeId = Guid.NewGuid().ToString("N");
+                    _closeResult = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Post(new { @event = "closing", data = new { id = _closeId } });
+                    var error = await _closeResult.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                    if (error is not null) throw new IOException(error);
+                }
+            }
+            catch (Exception ex)
+            {
+                _closePending = false; _closeResult = null; _closeId = null;
+                Post(new { @event = "closeCancelled", data = new { error = "关闭前保存失败：" + ex.Message } });
+                return;
+            }
             _closing = true;
+            _startupSplash?.Dismiss();
             _updates.Dispose();
             _poll.Stop();
             _events.Stop();
+            _startupTimeout.Stop();
             Enabled = false;
+            ExportAbort(); _documentTransfer.Abort();
             await _service.DisposeAsync();
             _closed = true;
             Close();
@@ -78,11 +123,18 @@ public sealed class MainForm : Form
     {
         try
         {
-            await _service.InitializeAsync();
-            var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(_directory, "Browser"));
-            if (_closing) return;
+            _startupTimeout.Start();
+            var serviceInitialization = Task.Run(_service.InitializeAsync);
+            _ = AppService.Observe(serviceInitialization);
+            _startupPorts = _service.GetPortsAsync();
+            _ = AppService.Observe(_startupPorts);
+            var environmentCreation = CoreWebView2Environment.CreateAsync(null, Path.Combine(_directory, "Browser"));
+            var environment = await environmentCreation;
+            if (_closing || _startupFailed) return;
             await _web.EnsureCoreWebView2Async(environment);
-            if (_closing) return;
+            await serviceInitialization;
+            if (_closing || _startupFailed) return;
+            ApplyMonitorSettings();
             var core = _web.CoreWebView2;
             core.Settings.AreHostObjectsAllowed = false;
             core.Settings.AreDevToolsEnabled = false;
@@ -92,21 +144,118 @@ public sealed class MainForm : Form
             core.Settings.AreBrowserAcceleratorKeysEnabled = false;
             core.Settings.IsNonClientRegionSupportEnabled = true;
             core.SetVirtualHostNameToFolderMapping("cast.example", Path.Combine(AppContext.BaseDirectory, "Web"), CoreWebView2HostResourceAccessKind.Deny);
-            core.NavigationStarting += (_, e) => e.Cancel = e.Uri != PageUrl;
+            core.NavigationStarting += (_, e) =>
+            {
+                e.Cancel = e.Uri != PageUrl;
+                if (e.Cancel || _closing || _startupFailed) return;
+                _ready = _pageInitialized = _pageReady = _navigationCompleted = false;
+                _preparingPage = _startupFramePrepared = false;
+                _pageGeneration++;
+                _documentTransfer.Abort(); ExportAbort();
+                _poll.Stop();
+                _events.Stop();
+                lock (_eventSync) { _pendingLogs.Clear(); _pendingLogBytes = 0; _pendingStatus = null; }
+                _loading.Visible = true;
+                _loading.BringToFront();
+                _startupTimeout.Start();
+            };
             core.FrameNavigationStarting += (_, e) => e.Cancel = true;
             core.NewWindowRequested += (_, e) => e.Handled = true;
             core.PermissionRequested += (_, e) => e.State = CoreWebView2PermissionState.Deny;
             core.WebMessageReceived += HandleMessage;
             core.NavigationCompleted += (_, e) =>
             {
-                if (e.IsSuccess) { _loading.Visible = false; _poll.Start(); _events.Start(); }
-                else _loading.Text = "cast 加载失败：" + e.WebErrorStatus;
+                if (_closing) return;
+                if (e.IsSuccess) { _navigationCompleted = true; TryShowPage(); }
+                else FailStartup("cast 加载失败：" + e.WebErrorStatus);
             };
             core.Navigate(PageUrl);
         }
         catch (Exception ex)
         {
-            _loading.Text = "无法打开 cast。请检查 Microsoft Edge WebView2 Runtime。\n" + ex.Message;
+            FailStartup("无法打开 cast。请检查 Microsoft Edge WebView2 Runtime。\n" + ex.Message);
+        }
+    }
+
+    private async void TryShowPage()
+    {
+        if (_closing || _startupFailed || _ready || _preparingPage || !_navigationCompleted || !_pageReady) return;
+        _preparingPage = true;
+        var generation = _pageGeneration;
+        try
+        {
+            _loading.Visible = false;
+            var core = _web.CoreWebView2;
+            var colors = await core.ExecuteScriptAsync("getComputedStyle(document.body).backgroundColor.match(/[\\d.]+/g).slice(0,3).map(Number)");
+            if (_closing || IsDisposed || _startupFailed || generation != _pageGeneration) return;
+            var rgb = JsonSerializer.Deserialize<int[]>(colors);
+            if (rgb is { Length: 3 })
+            {
+                BackColor = _web.DefaultBackgroundColor = Color.FromArgb(rgb[0], rgb[1], rgb[2]);
+                _loading.BackColor = BackColor;
+                _loading.ForeColor = BackColor.GetBrightness() < .5F ? Color.Gainsboro : Color.Black;
+            }
+            // Warm the actual WebView surface after fonts and layout are ready.
+            await using var frame = new MemoryStream();
+            await core.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, frame);
+            if (_closing || IsDisposed || _startupFailed || generation != _pageGeneration) return;
+            if (frame.Length == 0) throw new IOException("主界面首帧尚未完成");
+            _startupFramePrepared = true;
+            _startupTimeout.Stop();
+            _ready = true;
+            _poll.Start(); _events.Start();
+            _service.PublishStatus();
+            Post(new { @event = "window", data = WindowStatus() });
+            RevealStartup();
+        }
+        catch (Exception ex)
+        {
+            if (!_closing && !IsDisposed && generation == _pageGeneration)
+                FailStartup("cast 主界面准备失败：" + ex.Message);
+        }
+        finally { if (generation == _pageGeneration) _preparingPage = false; }
+    }
+
+    private bool PageReady()
+    {
+        if (!_pageInitialized || _startupFailed) throw new InvalidOperationException("cast 初始化尚未完成或已中止");
+        _pageReady = true;
+        TryShowPage();
+        return true;
+    }
+
+    private bool FailStartup(string message)
+    {
+        if (_closing || IsDisposed) return false;
+        _startupFailed = true;
+        _ready = false;
+        _startupTimeout.Stop();
+        _poll.Stop();
+        _events.Stop();
+        _loading.Text = message;
+        _loading.Visible = true;
+        _loading.BringToFront();
+        RevealStartup(immediately: true);
+        return false;
+    }
+
+    private void RevealStartup(bool immediately = false)
+    {
+        void Reveal()
+        {
+            if (_closing || IsDisposed) return;
+            Opacity = 1;
+            Activate();
+        }
+        if (_startupSplash is null || _startupSplash.IsDisposed) Reveal();
+        else if (immediately || !_startupSplash.MotionEnabled)
+        {
+            _startupSplash.Dismiss(); Reveal();
+        }
+        else
+        {
+            _startupSplash.Complete(Reveal);
+            _startupSplash.Show(this);
         }
     }
 
@@ -117,22 +266,26 @@ public sealed class MainForm : Form
         try
         {
             var json = e.WebMessageAsJson;
-            if (json.Length > 4_194_304) throw new FormatException("请求数据超出限制");
             using var message = JsonDocument.Parse(json);
             var root = message.RootElement;
             id = root.GetProperty("id").GetString();
             if (string.IsNullOrEmpty(id) || id.Length > 100) throw new FormatException("请求标识无效");
+            if (json.Length > MaxBridgeMessageChars) throw new FormatException("请求数据超出限制");
             var command = root.GetProperty("command").GetString();
+            if (_closePending && command is not ("save" or "saveStart" or "saveChunk" or "saveFinish" or "saveAbort" or "closeReady"))
+                throw new InvalidOperationException("cast 正在保存并关闭");
             var data = root.GetProperty("data");
             object? result = command switch
             {
-                "init" => InitializePage(),
+                "init" => await InitializePageAsync(),
+                "ready" => PageReady(),
+                "startupError" => FailStartup("cast 初始化失败：" + data.GetProperty("message").GetString()),
                 "window" => WindowCommand(data),
                 "updateStatus" => _updates.Status,
                 "updateCheck" => await _updates.CheckAsync(),
                 "updateDownload" => await _updates.DownloadAsync(),
                 "updateInstall" => await InstallUpdate(data),
-                "ports" => _service.GetPorts(),
+                "ports" => await _service.GetPortsAsync(),
                 "connect" => await Connect(data),
                 "disconnect" => await Disconnect(),
                 "send" => await Send(data),
@@ -142,11 +295,21 @@ public sealed class MainForm : Form
                 "step" => Step(),
                 "stop" => Stop(),
                 "save" => await Save(data),
+                "saveStart" => SaveStart(data),
+                "saveChunk" => SaveChunk(data),
+                "saveFinish" => await SaveFinish(data),
+                "saveAbort" => SaveAbort(data),
+                "closeReady" => CloseReady(data),
                 "encode" => Encode(data),
+                "validateSend" => _service.Preview(Read<SendRequest>(data)),
                 "pins" => Pins(data),
                 "resetStats" => ResetStats(),
                 "clearLogs" => ClearLogs(),
                 "copy" => Copy(data),
+                "exportStart" => ExportStart(data),
+                "exportChunk" => await ExportChunk(data),
+                "exportFinish" => await ExportFinish(),
+                "exportAbort" => ExportAbort(),
                 "export" => await Export(data),
                 "import" => await Import(),
                 _ => throw new FormatException("未知操作")
@@ -156,12 +319,13 @@ public sealed class MainForm : Form
         catch (Exception ex) { Post(new { id, ok = false, error = ex.Message }); }
     }
 
-    private object InitializePage()
+    private async Task<object> InitializePageAsync()
     {
-        _ready = true;
         IReadOnlyList<PortInfo> ports = [];
         string? error = null;
-        try { ports = _service.GetPorts(); } catch (Exception ex) { error = ex.Message; }
+        try { ports = await (_startupPorts ?? _service.GetPortsAsync()); } catch (Exception ex) { error = ex.Message; }
+        finally { _startupPorts = null; }
+        _pageInitialized = true;
         var logs = _service.Logs;
         _lastLogSentId = logs.LastOrDefault()?.Id ?? _lastLogSentId;
         return new { document = _service.Document, ports, portError = error, logs, status = _service.Status(), window = WindowStatus(), update = _updates.Status, version = typeof(MainForm).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion };
@@ -174,7 +338,9 @@ public sealed class MainForm : Form
         _restartRequested = true;
         try
         {
-            await _service.SaveAsync(Read<AppDocument>(data));
+            var document = data.TryGetProperty("useSavedDocument", out var saved) && saved.GetBoolean()
+                ? _service.Document : Read<AppDocument>(data);
+            await _service.SaveAsync(document);
             _updates.PrepareRestart();
             BeginInvoke(Close);
             return _updates.Status;
@@ -262,7 +428,57 @@ public sealed class MainForm : Form
     private object Pause(JsonElement data) { _service.Pause(data.GetProperty("paused").GetBoolean()); return _service.Status(); }
     private object Step() { _service.Step(); return _service.Status(); }
     private object Stop() { _service.Stop(); return _service.Status(); }
-    private async Task<object> Save(JsonElement data) { await _service.SaveAsync(Read<AppDocument>(data)); return true; }
+    private async Task<object> Save(JsonElement data)
+    {
+        await _service.SaveAsync(Read<AppDocument>(data), closing: _closePending);
+        ApplyMonitorSettings();
+        return true;
+    }
+
+    private object SaveStart(JsonElement data)
+    {
+        _documentTransfer.Start(data.GetProperty("id").GetString()!, data.GetProperty("length").GetInt32());
+        return true;
+    }
+
+    private object SaveChunk(JsonElement data)
+    {
+        _documentTransfer.Append(data.GetProperty("id").GetString()!, data.GetProperty("offset").GetInt32(),
+            data.GetProperty("content").GetString()!);
+        return true;
+    }
+
+    private async Task<object> SaveFinish(JsonElement data)
+    {
+        var document = _documentTransfer.Finish(data.GetProperty("id").GetString()!);
+        await _service.SaveAsync(document, closing: _closePending);
+        ApplyMonitorSettings();
+        return true;
+    }
+
+    private object SaveAbort(JsonElement data)
+    {
+        _documentTransfer.Abort(data.GetProperty("id").GetString()); return true;
+    }
+
+    private object CloseReady(JsonElement data)
+    {
+        if (!_closePending || data.GetProperty("id").GetString() != _closeId)
+            throw new InvalidOperationException("关闭请求已结束");
+        _closeResult!.TrySetResult(data.TryGetProperty("error", out var error) ? error.GetString() : null);
+        return true;
+    }
+
+    private void ApplyMonitorSettings()
+    {
+        var settings = _service.MonitorSettings;
+        if (_events.Interval != settings.RefreshIntervalMs) _events.Interval = settings.RefreshIntervalMs;
+        lock (_eventSync)
+        {
+            while (_pendingLogs.Count > settings.MaxLogCount || (_pendingLogBytes > AppService.MaxLogTextBytes && _pendingLogs.Count > 1))
+                _pendingLogBytes -= AppService.LogTextBytes(_pendingLogs.Dequeue());
+        }
+    }
     private object Encode(JsonElement data) { var payload = _service.Encode(Read<SendRequest>(data)); return new { hex = HexCodec.Format(payload.Bytes), byteCount = payload.Bytes.Length }; }
     private object Pins(JsonElement data) { _service.SetPins(data.GetProperty("dtr").GetBoolean(), data.GetProperty("rts").GetBoolean()); return _service.Status(); }
     private object ResetStats() { _service.ResetStats(); return true; }
@@ -283,14 +499,61 @@ public sealed class MainForm : Form
 
     private async Task<object> Export(JsonElement data)
     {
+        var content = data.GetProperty("content").GetString() ?? "";
+        if (!BeginExport(data)) return new { saved = false };
+        try
+        {
+            for (var offset = 0; offset < content.Length;)
+            {
+                var end = Math.Min(content.Length, offset + 1_048_576);
+                if (end < content.Length && char.IsHighSurrogate(content[end - 1])) end--;
+                await _export!.AppendAsync(content[offset..end]);
+                offset = end;
+            }
+            return await ExportFinish();
+        }
+        finally { ExportAbort(); }
+    }
+
+    private object ExportStart(JsonElement data) => new { saved = BeginExport(data) };
+
+    private bool BeginExport(JsonElement data)
+    {
+        if (_export is not null || _exportOpening) throw new InvalidOperationException("已有导出任务正在进行");
         var format = data.GetProperty("format").GetString();
         if (format is not ("txt" or "csv" or "json")) throw new FormatException("导出格式无效");
         var fileName = Path.GetFileName(data.GetProperty("fileName").GetString());
-        var content = data.GetProperty("content").GetString() ?? "";
         using var dialog = new SaveFileDialog { FileName = fileName, DefaultExt = format, Filter = $"{format.ToUpperInvariant()} 文件|*.{format}", AddExtension = true, OverwritePrompt = true };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return new { saved = false };
-        await File.WriteAllTextAsync(dialog.FileName!, content, new UTF8Encoding(format == "csv"));
-        return new { saved = true };
+        _exportOpening = true;
+        try
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return false;
+            if (_closing || _closePending) throw new InvalidOperationException("cast 正在关闭");
+            _export = new(dialog.FileName!, format!);
+            return true;
+        }
+        finally { _exportOpening = false; }
+    }
+
+    private async Task<object> ExportChunk(JsonElement data)
+    {
+        if (_export is null) throw new InvalidOperationException("导出任务未开始");
+        var content = data.GetProperty("content").GetString() ?? string.Empty;
+        try { await _export.AppendAsync(content); return true; }
+        catch { ExportAbort(); throw; }
+    }
+
+    private async Task<object> ExportFinish()
+    {
+        if (_export is null) throw new InvalidOperationException("导出任务未开始");
+        try { await _export.FinishAsync(); return new { saved = true }; }
+        finally { ExportAbort(); }
+    }
+
+    private bool ExportAbort()
+    {
+        _export?.Dispose(); _export = null;
+        return true;
     }
 
     private async Task<object?> Import()
@@ -303,7 +566,7 @@ public sealed class MainForm : Form
 
     private void OnServiceChanged(string name, object data)
     {
-        if (!_ready || _closing || IsDisposed || !IsHandleCreated) return;
+        if (!_pageInitialized || _closing || IsDisposed || !IsHandleCreated) return;
         if (name is "log" or "status")
         {
             lock (_eventSync)
@@ -313,7 +576,7 @@ public sealed class MainForm : Form
                 {
                     var log = (AppLog)data;
                     _pendingLogs.Enqueue(log); _pendingLogBytes += AppService.LogTextBytes(log);
-                    while (_pendingLogs.Count > AppService.MaxLogCount || (_pendingLogBytes > AppService.MaxLogTextBytes && _pendingLogs.Count > 1))
+                    while (_pendingLogs.Count > _service.MonitorSettings.MaxLogCount || (_pendingLogBytes > AppService.MaxLogTextBytes && _pendingLogs.Count > 1))
                         _pendingLogBytes -= AppService.LogTextBytes(_pendingLogs.Dequeue());
                 }
             }
@@ -330,8 +593,21 @@ public sealed class MainForm : Form
         object? status;
         lock (_eventSync)
         {
-            logs = _pendingLogs.Where(log => log.Id > _lastLogSentId).ToArray();
-            _pendingLogs.Clear(); _pendingLogBytes = 0;
+            var batch = new List<AppLog>();
+            long batchBytes = 0;
+            while (_pendingLogs.Count > 0 && _pendingLogs.Peek().Id <= _lastLogSentId) {
+                _pendingLogBytes -= AppService.LogTextBytes(_pendingLogs.Dequeue());
+            }
+            while (_pendingLogs.Count > 0)
+            {
+                var next = _pendingLogs.Peek();
+                var size = AppService.LogTextBytes(next);
+                if (batch.Count > 0 && batchBytes + size > MaxEventBatchBytes) break;
+                batch.Add(_pendingLogs.Dequeue());
+                batchBytes += size;
+                _pendingLogBytes -= size;
+            }
+            logs = [.. batch];
             status = _pendingStatus; _pendingStatus = null;
         }
         if (logs.Length > 0) { _lastLogSentId = logs[^1].Id; Post(new { @event = "logs", data = logs }); }
@@ -341,12 +617,17 @@ public sealed class MainForm : Form
     private void Post(object data)
     {
         if (_closing || IsDisposed || _web.CoreWebView2 is null || _web.CoreWebView2.Source != PageUrl) return;
-        _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(data, AppService.Json));
+        _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(data, BridgeJson));
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _poll.Dispose(); _events.Dispose(); _service.Changed -= OnServiceChanged; _updates.Changed -= OnUpdateChanged; _updates.Dispose(); _web.Dispose(); }
+        if (disposing)
+        {
+            ExportAbort(); _documentTransfer.Abort();
+            _startupSplash?.Dispose();
+            _poll.Dispose(); _events.Dispose(); _startupTimeout.Dispose(); _service.Changed -= OnServiceChanged; _updates.Changed -= OnUpdateChanged; _updates.Dispose(); _web.Dispose();
+        }
         base.Dispose(disposing);
         if (disposing) { _loadingFont.Dispose(); _loadingFonts.Dispose(); }
     }

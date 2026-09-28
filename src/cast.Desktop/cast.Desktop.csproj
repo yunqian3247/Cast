@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\cast.Core\cast.Core.csproj" />
     <ProjectReference Include="..\cast.Serial\cast.Serial.csproj" />
+    <InternalsVisibleTo Include="cast.Desktop.Tests" />
   </ItemGroup>
 
   <ItemGroup>
@@ -12,7 +13,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>1.0.4-preview.20260917</Version>
+    <Version>1.0.6-preview.20260918</Version>
     <AssemblyName>cast</AssemblyName>
     <RootNamespace>cast.Desktop</RootNamespace>
     <Product>cast</Product>

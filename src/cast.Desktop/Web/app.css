@@ -172,7 +172,7 @@ body.busy-edit .preset-hover-actions button[data-action="delete"], body.busy-edi
 .preferences-dialog { width: 480px; }
 .preferences-grid { display: grid; gap: 10px; }
 .preferences-grid .form-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 220px); align-items: center; }
-.preferences-grid select { width: 100%; min-width: 0; }
+.preferences-grid :is(select, input) { width: 100%; min-width: 0; }
 .preferences-sidebars, .preferences-behavior { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
 .preference-sidebar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .preference-sidebar select { width: 100%; min-width: 0; height: 30px; }
@@ -191,14 +191,14 @@ body.busy-edit .preset-hover-actions button[data-action="delete"], body.busy-edi
 .about-dialog { width: 320px; text-align: center; }
 .about-brand { display: flex; justify-content: center; align-items: center; gap: 8px; font-size: calc(var(--ui-font-size, 12px) + 6px); padding-top: 8px; }
 .about-brand svg { width: 26px; height: 26px; }
-.about-update { display: grid; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; text-align: left; }
+.about-update { display: grid; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; text-align: center; }
 .about-update p { margin: 0; overflow-wrap: anywhere; }
 .about-update progress { width: 100%; height: 6px; accent-color: var(--text); }
 .about-update [hidden], .update-actions [hidden] { display: none; }
 .about-update .form-error:empty { display: none; }
 #updateRestartNotice { color: var(--text-sub); font-size: var(--ui-small-font-size); }
-.update-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
-.update-actions button { height: 28px; padding: 0 8px; line-height: 20px; }
+.update-actions { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px; }
+.update-actions button { height: 28px; padding: 0 8px; line-height: 20px; white-space: nowrap; }
 .log-stream, .log-stream .log-entry, .log-stream .log-text, .log-stream .log-text-hex, .send-textarea { font-size: var(--terminal-font-size, 12px); }
 .send-textarea { line-height: max(20px, calc(var(--terminal-font-size, 12px) + 6px)); }
 body :is(button, select, input[type="text"], input[type="number"]) { min-height: calc(var(--ui-font-size) + 10px); }

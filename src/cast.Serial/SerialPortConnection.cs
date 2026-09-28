@@ -144,7 +144,8 @@ public sealed class SerialPortConnection : ISerialConnection, ISerialPinControl
             var write = port.BaseStream.WriteAsync(bytes, cancellationToken).AsTask();
             try
             {
-                var timeout = TimeSpan.FromMilliseconds(port.WriteTimeout + bytes.Length * 12000d / port.BaudRate);
+                var timeout = SerialWriteTiming.GetTimeout(bytes.Length, port.BaudRate, port.DataBits, port.Parity != Parity.None,
+                    port.StopBits == StopBits.Two ? 2 : port.StopBits == StopBits.OnePointFive ? 1.5 : 1, port.WriteTimeout);
                 await write.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)

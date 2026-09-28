@@ -10,6 +10,9 @@ import { verifyResponsiveLayout } from './responsive-layout.test.mjs';
 import { verifyPreferences } from './preferences.test.mjs';
 import { verifyScrolling } from './scrolling.test.mjs';
 import { verifyUpdates } from './updates.test.mjs';
+import { verifyMonitorSettings } from './monitor-settings.test.mjs';
+import { verifyPortRefresh } from './port-refresh.test.mjs';
+import { verifyAuditRegressions } from './audit-regression.test.mjs';
 const { chromium } = process.env.PEBREL_PLAYWRIGHT_MODULE
   ? await import(pathToFileURL(process.env.PEBREL_PLAYWRIGHT_MODULE)) : await import('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -42,6 +45,8 @@ await context.addInitScript(() => {
         const d = message.data; let result = true;
         switch(message.command) {
           case 'init': result = { document:mock.document, ports:[{portName:'COM3',displayName:'COM3 (CH340)',deviceInstanceId:'USB\\VID_1A86'}],logs:mock.logs,status:mock.status,window:mock.window,update:mock.update,version:'1.0.2-preview.20260917' }; break;
+          case 'ready': mock.ready = true; break;
+          case 'startupError': mock.startupError = d.message; break;
           case 'updateStatus': result = mock.update; break;
           case 'updateCheck':
             mock.update = mock.noUpdate ? { phase:'idle', message:'已是最新版本', canCheck:true } : { phase:'available', message:'发现新版本', version:'1.0.3-preview.20260918', canCheck:true, canDownload:true };
@@ -55,7 +60,7 @@ await context.addInitScript(() => {
             },250); return;
           case 'updateInstall':
             if(mock.failSave) throw Error('配置写入失败');
-            mock.document=structuredClone(d);mock.update={phase:'restarting',message:'正在安装更新并重启...'};
+            if(!d.useSavedDocument) mock.document=structuredClone(d);mock.update={phase:'restarting',message:'正在安装更新并重启...'};
             result=mock.update;break;
           case 'window':
             if (d.action === 'pin') mock.window.topMost = !mock.window.topMost;
@@ -63,7 +68,24 @@ await context.addInitScript(() => {
             result = mock.window; break;
           case 'ports': if(mock.failPorts) throw Error('设备枚举失败');result=mock.ports;break;
           case 'save': if(mock.failSave) throw Error('配置写入失败');mock.document=structuredClone(d);localStorage.setItem('fixture',JSON.stringify(d));break;
+          case 'saveStart':
+            if(mock.saveTransfer) throw Error('已有配置传输正在进行');
+            mock.saveTransfer={id:d.id,length:d.length,content:''};break;
+          case 'saveChunk':
+            if(!mock.saveTransfer||mock.saveTransfer.id!==d.id||mock.saveTransfer.content.length!==d.offset) throw Error('配置分块顺序无效');
+            if(mock.failChunk) throw Error('分块保存失败');mock.saveTransfer.content+=d.content;break;
+          case 'saveFinish':
+            if(mock.failSave) throw Error('配置写入失败');
+            if(!mock.saveTransfer||mock.saveTransfer.content.length!==mock.saveTransfer.length) throw Error('配置传输尚未完成');
+            mock.document=JSON.parse(mock.saveTransfer.content);mock.saveTransfer=null;localStorage.setItem('fixture',JSON.stringify(mock.document));break;
+          case 'saveAbort': if(mock.saveTransfer?.id===d.id) mock.saveTransfer=null;break;
+          case 'closeReady': mock.closeResult=d;break;
           case 'encode': result = encode(d); break;
+          case 'validateSend': {
+            if(d.text.length>1048576) throw Error('发送内容超出限制');
+            const parts=d.lines?d.text.replaceAll('\r\n','\n').split('\n').filter(Boolean):[d.text];
+            result={lineCount:d.text?d.text.split('\n').length:0,byteCount:parts.reduce((sum,text)=>sum+encode({...d,text}).byteCount,0)};break;
+          }
           case 'connect': mock.status.connected=true;mock.status.port=d.portName;mock.status.pins={dtr:false,rts:false,cts:true,dsr:false};emit({event:'status',data:mock.status});result=mock.status;break;
           case 'disconnect':mock.status.connected=false;mock.status.pins=null;mock.status.run={kind:'idle',paused:false,step:-1};emit({event:'status',data:mock.status});break;
           case 'send': { const encoded=encode(d);mock.writes.push(d);mock.status.tx+=encoded.byteCount;const log={id:Date.now(),timestamp:new Date().toISOString(),dir:'TX',text:d.text,...encoded,source:'manual'};mock.logs.push(log);emit({event:'log',data:log});emit({event:'status',data:mock.status});break; }
@@ -77,6 +99,13 @@ await context.addInitScript(() => {
           case 'clearLogs':if(mock.failClear) throw Error('清空失败');mock.logs=[];break;
           case 'copy':mock.clipboard=d.text;break;
           case 'export':mock.exports.push(d);result={saved:true};break;
+          case 'exportStart':
+            if(mock.exportTransfer) throw Error('已有导出任务正在进行');
+            if(mock.cancelExport) {result={saved:false};break;}
+            mock.exportTransfer={...d,content:''};result={saved:true};break;
+          case 'exportChunk': if(mock.failExportChunk) throw Error('导出写入失败');mock.exportTransfer.content+=d.content;break;
+          case 'exportFinish':mock.exports.push(mock.exportTransfer);mock.exportTransfer=null;result={saved:true};break;
+          case 'exportAbort':mock.exportTransfer=null;break;
           case 'import':result=mock.imports;break;
           default:throw Error('Unknown command');
         }
@@ -171,6 +200,7 @@ async function assertModalAlignment(label) {
 try {
   await page.goto(pathToFileURL(path.join(root,'src/cast.Desktop/Web/index.html')).href);
   await page.waitForSelector('body[data-ready="true"]');
+  await verifyPortRefresh(page);
   assert.equal(await page.locator('.preset-row').count(),2);
   await page.screenshot({path:path.join(output,'web-1120-default.png')});
   assert.equal(await page.locator('[title]').count(),0);
@@ -541,9 +571,11 @@ try {
   await verifyInputSettings(page,output);
   await verifyResponsiveLayout(page,output);
   await verifyPreferences(page,output);
+  await verifyMonitorSettings(page,output);
   await verifyScrolling(page,output);
   await verifyUpdates(page,output);
   await verifyVirtualLogs(page,output);
+  await verifyAuditRegressions(page);
   assert.deepEqual(errors,[]);
   assert.equal(await page.locator('[title]').count(),0);
   console.log('PASS: bridge UI, presets, CRC, encoding count, search/export, workflow controls, pins, persistence, three viewports and modal screenshots');

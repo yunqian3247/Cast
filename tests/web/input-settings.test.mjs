@@ -3,7 +3,7 @@ import path from 'node:path';
 
 export async function verifyInputSettings(page, output) {
   assert.equal(await page.locator('#selSendHotkey,#cfgSendHotkey,#cfgTheme,#cfgTimestamp,#btnToggleScroll').count(), 0);
-  assert.deepEqual(await page.locator('#settingsModal input,#settingsModal select').evaluateAll(elements => elements.map(el => el.id)), ['cfgUiFontSize', 'cfgTerminalFontSize', 'cfgLeftFunction', 'cfgLeftDefaultVisible', 'cfgRightFunction', 'cfgRightDefaultVisible', 'cfgAutoScroll', 'cfgShowPins', 'cfgRememberInput', 'cfgClearAfterSend', 'cfgHoverTips']);
+  assert.deepEqual(await page.locator('#settingsModal input,#settingsModal select').evaluateAll(elements => elements.map(el => el.id)), ['cfgUiFontSize', 'cfgTerminalFontSize', 'cfgMaxLogCount', 'cfgRefreshIntervalMs', 'cfgLeftFunction', 'cfgLeftDefaultVisible', 'cfgRightFunction', 'cfgRightDefaultVisible', 'cfgAutoScroll', 'cfgShowPins', 'cfgRememberInput', 'cfgClearAfterSend', 'cfgHoverTips']);
   await page.evaluate(() => {
     const fixture = JSON.parse(localStorage.getItem('fixture'));
     fixture.ui.hotkey = 'ctrlenter';
