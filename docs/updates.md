@@ -12,16 +12,20 @@ cast 使用 Velopack 1.2.0。SDK 与仓库本地 `vpk` 工具保持同一版本�
 
 ## 配置托管地址
 
-源文件为 `src/cast.Desktop/update-settings.json`，构建时复制到程序目录。当前 `feedUrl` 留空，界面显示「更新地址尚未配置」，此状态下不会发出更新请求。
+源文件为 `src/cast.Desktop/update-settings.json`，构建时复制到程序目录。默认使用公开仓库 `yunqian3247/Cast` 的 GitHub Releases，启用预发布更新：
 
 ```json
 {
-  "feedUrl": "",
-  "channel": "win-x64-preview"
+  "feedUrl": "https://github.com/yunqian3247/Cast",
+  "channel": "win-x64-preview",
+  "source": "github",
+  "includePrereleases": true
 }
 ```
 
-获得托管地址后，将 `feedUrl` 设置为包含更新索引和包文件的 HTTPS 目录地址。地址支持静态网站、对象存储或 CDN。此配置使用 Velopack `SimpleWebSource`，GitHub 仓库页面或 Releases 页面需要对应的源适配。配置内容在启动时读取，修改后重新启动应用。打包脚本默认读取源文件，也支持参数覆盖。每次发布都应包含同一更新地址，避免后续版本将地址覆盖为空。
+`source` 为 `github` 时使用 Velopack `GithubSource`，`feedUrl` 填写仓库根地址。`includePrereleases` 控制是否包含 GitHub 预发布版本，当前预发布通道设为 `true`。客户端通过公开接口读取索引和附件，无需访问令牌。源码推送后，还需要在 Release 中上传更新索引和包文件，应用才能发现新版本。
+
+静态网站、对象存储或 CDN 使用 `source: "static"`，`feedUrl` 填写包含更新索引和包文件的 HTTPS 目录地址。旧配置省略 `source` 时继续使用静态更新源。配置内容在启动时读取，修改后重新启动应用。打包脚本默认读取源文件，也支持参数覆盖。每次发布都应包含同一更新地址。`feedUrl` 为空时显示「更新地址尚未配置」，检查按钮禁用。
 
 `channel` 必须与打包通道一致。本机验证允许 `http://localhost` 或回环 IP；远程地址要求 HTTPS。地址中不接受用户名、密码、查询参数或片段。
 
@@ -33,11 +37,12 @@ cast 使用 Velopack 1.2.0。SDK 与仓库本地 `vpk` 工具保持同一版本�
 pwsh -NoProfile -File scripts/Publish-Preview.ps1
 ```
 
-指定版本及已确定的托管地址：
+覆盖为静态托管地址：
 
 ```powershell
 pwsh -NoProfile -File scripts/Publish-Preview.ps1 `
-  -Version 1.0.4-preview.20260918 `
+  -Version 1.0.7-preview.20260918 `
+  -Source static `
   -FeedUrl https://updates.example.com/cast
 ```
 
@@ -53,6 +58,17 @@ pwsh -NoProfile -File scripts/Publish-Preview.ps1 `
 
 ## 托管发布
 
+### GitHub Releases
+
+1. 为已推送的提交创建 Release，标签与打包版本对应，例如 `v1.0.6-preview.20260917`，勾选预发布。
+2. 在草稿中上传 `artifacts/releases/<版本>/` 内生成的安装包、便携包、完整 `.nupkg`、`releases.win-x64-preview.json` 及其余发布元数据。保留文件名。
+3. 确认附件齐全后发布 Release。应用按 `win-x64-preview` 通道读取索引，通过公开附件地址下载更新。
+4. 通过较旧的、已配置 GitHub 更新源的 Velopack 安装版或便携版检查、下载、安装并重启，核对版本和用户配置。
+
+`1.0.5` 及更早版本的更新地址为空，首次启用时需使用 `1.0.6` 的安装包或便携包。源码构建通过普通 `dotnet publish` 输出时，界面会提示使用 Velopack 安装包或便携包。GitHub 公共 API 有访问频率限制，检查失败时可稍后重试。
+
+### 静态托管
+
 1. 先上传 `.nupkg`，确认可通过 HTTPS 下载。
 2. 再上传 `releases.win-x64-preview.json`，确保索引中引用的文件位于同一目录。索引设置短缓存或重新验证策略，包文件可长期缓存。
 3. 通过较旧的 Velopack 安装版或便携版检查、下载、安装并重启，核对版本和用户配置。
@@ -66,6 +82,6 @@ dotnet test cast.sln -c Release
 npm --prefix tests/web test
 ```
 
-更新专项测试覆盖空配置、非法配置、普通构建、版本检查、下载进度、失败重试、重复请求、待重启恢复，以及真实 Velopack 客户端从本地 HTTP 服务读取索引、下载和校验包。前端测试覆盖状态呈现、保存失败、运行中禁止安装、主题与窗口尺寸。正式托管地址的访问和实际跨版本安装重启需要配置地址后联调。
+更新专项测试覆盖空配置、非法配置、普通构建、版本检查、下载进度、失败重试、重复请求、待重启恢复，以及真实 Velopack 客户端从本地 HTTP 服务读取索引、下载和校验包。GitHub 专项测试通过模拟接口验证预发布筛选、通道索引、公开附件下载、损坏包拒绝和待重启恢复。前端测试覆盖状态呈现、保存失败、运行中禁止安装、主题与窗口尺寸。实际跨版本安装重启需在 Release 发布后联调。
 
 参考：[Velopack .NET 集成](https://docs.velopack.io/getting-started/csharp)、[更新源](https://docs.velopack.io/integrating/update-sources)、[打包](https://docs.velopack.io/packaging/overview)。

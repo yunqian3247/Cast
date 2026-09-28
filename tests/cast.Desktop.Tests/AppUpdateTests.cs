@@ -55,6 +55,91 @@ public sealed class AppUpdateTests : IDisposable
     [InlineData("https://updates.example.com/#fragment")]
     public void InvalidFeedDirectoriesAreRejected(string url) => Assert.Throws<FormatException>(() => new UpdateSettings(url).Validate());
 
+    [Theory]
+    [InlineData("https://github.com/yunqian3247")]
+    [InlineData("https://github.com/yunqian3247/Cast/releases")]
+    [InlineData("https://github.com/yunqian3247/Cast.git")]
+    [InlineData("https://github.com:8443/yunqian3247/Cast")]
+    [InlineData("https://example.com/yunqian3247/Cast")]
+    [InlineData("https://github.com/yunqian3247/Cast?token=secret")]
+    public void InvalidGithubRepositoriesAreRejected(string url) =>
+        Assert.Throws<FormatException>(() => new UpdateSettings(url, Source: "github").Validate());
+
+    [Fact]
+    public void SourceConfigurationPreservesStaticFeedsAndEnablesBundledGithubPrereleases()
+    {
+        var legacy = UpdateSettings.Load(Settings());
+        Assert.IsAssignableFrom<SimpleWebSource>(VelopackUpdateClient.CreateSource(legacy));
+        Assert.Throws<FormatException>(() => new UpdateSettings(Source: "unknown").Validate());
+        var bundled = UpdateSettings.Load(Path.Combine(AppContext.BaseDirectory, "update-settings.json"));
+        var source = Assert.IsType<GithubSource>(VelopackUpdateClient.CreateSource(bundled));
+        Assert.Equal("https://github.com/yunqian3247/Cast", source.RepoUri.ToString());
+        Assert.True(source.Prerelease);
+        Assert.Equal("win-x64-preview", bundled.Channel);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task GithubSourceFiltersPrereleasesAndVerifiesPublicDownloads(bool includePrereleases, bool corrupt)
+    {
+        byte[] package;
+        using (var buffer = new MemoryStream())
+        {
+            using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                using var writer = new StreamWriter(zip.CreateEntry("cast.nuspec").Open());
+                writer.Write("<package><metadata><id>cast</id><version>1.0.2-preview.20260917</version><authors>cast</authors><description>Update fixture</description></metadata></package>");
+            }
+            package = buffer.ToArray();
+        }
+        var asset = Asset;
+        const string repository = "https://github.com/yunqian3247/Cast";
+        const string downloadBase = repository + "/releases/download/v1.0.2-preview.20260917/";
+        const string feedName = "releases.win-x64-preview.json";
+        var feed = JsonSerializer.SerializeToUtf8Bytes(new { Assets = new[] { new {
+            asset.PackageId, Version = asset.Version.ToString(), Type = "Full", asset.FileName,
+            Size = package.Length, SHA1 = Convert.ToHexString(SHA1.HashData(package)), SHA256 = Convert.ToHexString(SHA256.HashData(package)) } } });
+        var releases = JsonSerializer.SerializeToUtf8Bytes(new[] { new {
+            name = "cast preview", prerelease = true, published_at = "2026-09-17T00:00:00Z",
+            assets = new[] { feedName, asset.FileName }.Select(name => new {
+                name, browser_download_url = downloadBase + name, url = "https://api.github.com/assets/unused" }) } });
+        if (corrupt) package[0] ^= 0xff;
+        var downloader = new FixtureDownloader(new()
+        {
+            ["https://api.github.com/repos/yunqian3247/Cast/releases?per_page=10&page=1"] = releases,
+            [downloadBase + feedName] = feed,
+            [downloadBase + asset.FileName] = package
+        });
+        var settings = new UpdateSettings(repository, Source: "github", IncludePrereleases: includePrereleases);
+        var source = VelopackUpdateClient.CreateSource(settings, downloader);
+        var locator = new TestVelopackLocator("cast", "1.0.1-preview.20260917", _directory,
+            _directory, _directory, Path.Combine(_directory, "Update.exe"), settings.Channel);
+        var manager = new UpdateManager(source, new UpdateOptions { ExplicitChannel = settings.Channel }, locator);
+        var settingsPath = Path.Combine(_directory, "github.json");
+        File.WriteAllText(settingsPath, JsonSerializer.Serialize(settings, AppService.Json));
+        using var service = new AppUpdateService(settingsPath, _ => new VelopackUpdateClient(manager));
+        Assert.True(service.Status.CanCheck);
+        Assert.Equal(includePrereleases ? "available" : "idle", (await service.CheckAsync()).Phase);
+        if (!includePrereleases)
+        {
+            Assert.Single(downloader.Requests);
+            Assert.False(service.Status.CanDownload);
+            return;
+        }
+        Assert.Equal(corrupt ? "error" : "ready", (await service.DownloadAsync()).Phase);
+        Assert.Equal(!corrupt, service.Status.CanInstall);
+        Assert.Contains(downloadBase + feedName, downloader.Requests);
+        Assert.Contains(downloadBase + asset.FileName, downloader.Requests);
+        if (!corrupt)
+        {
+            Assert.Equal(package, await File.ReadAllBytesAsync(Path.Combine(_directory, asset.FileName)));
+            using var resumed = new AppUpdateService(settingsPath, _ => new VelopackUpdateClient(manager));
+            Assert.True(resumed.Status.CanInstall);
+        }
+    }
+
     [Fact]
     public async Task UnpackagedBuildsCannotCheckOrInstall()
     {
@@ -192,6 +277,29 @@ public sealed class AppUpdateTests : IDisposable
             var headers = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Length: {response.Body.Length}\r\nConnection: close\r\n\r\n");
             await stream.WriteAsync(headers);
             await stream.WriteAsync(response.Body);
+        }
+    }
+
+    private sealed class FixtureDownloader(Dictionary<string, byte[]> responses) : IFileDownloader
+    {
+        public List<string> Requests { get; } = [];
+
+        public Task<byte[]> DownloadBytes(string url, IDictionary<string, string>? headers = null, double timeout = 30)
+        {
+            Assert.False(headers?.Keys.Any(key => key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)) == true);
+            Requests.Add(url);
+            Assert.True(responses.ContainsKey(url), "Unexpected request: " + url);
+            return Task.FromResult(responses[url]);
+        }
+
+        public async Task<string> DownloadString(string url, IDictionary<string, string>? headers = null, double timeout = 30) =>
+            Encoding.UTF8.GetString(await DownloadBytes(url, headers, timeout));
+
+        public async Task DownloadFile(string url, string targetFile, Action<int> progress,
+            IDictionary<string, string>? headers = null, double timeout = 30, CancellationToken cancelToken = default)
+        {
+            await File.WriteAllBytesAsync(targetFile, await DownloadBytes(url, headers, timeout), cancelToken);
+            progress(100);
         }
     }
 

@@ -1,4 +1,6 @@
 {
-  "feedUrl": "",
-  "channel": "win-x64-preview"
+  "feedUrl": "https://github.com/yunqian3247/Cast",
+  "channel": "win-x64-preview",
+  "source": "github",
+  "includePrereleases": true
 }

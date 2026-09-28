@@ -6,7 +6,8 @@ using Velopack.Logging;
 
 namespace cast.Desktop;
 
-public sealed record UpdateSettings(string FeedUrl = "", string Channel = "win-x64-preview")
+public sealed record UpdateSettings(string FeedUrl = "", string Channel = "win-x64-preview",
+    string Source = "static", bool IncludePrereleases = false)
 {
     public static UpdateSettings Load(string path)
     {
@@ -19,6 +20,8 @@ public sealed record UpdateSettings(string FeedUrl = "", string Channel = "win-x
 
     public void Validate()
     {
+        if (Source is not ("static" or "github"))
+            throw new FormatException("更新源类型需要为 static 或 github");
         if (string.IsNullOrWhiteSpace(Channel) || !Regex.IsMatch(Channel, "^[a-z0-9][a-z0-9-]{0,63}$"))
             throw new FormatException("更新通道格式无效");
         if (string.IsNullOrWhiteSpace(FeedUrl)) return;
@@ -26,6 +29,10 @@ public sealed record UpdateSettings(string FeedUrl = "", string Channel = "win-x
             || (uri.Scheme != Uri.UriSchemeHttps && !(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))
             || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
             throw new FormatException("更新地址需要使用 HTTPS 目录地址；本机测试可使用 HTTP");
+        if (Source == "github" && (uri.Scheme != Uri.UriSchemeHttps || uri.Host != "github.com" || !uri.IsDefaultPort
+            || !Regex.IsMatch(uri.AbsolutePath, "^/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/?$")
+            || uri.AbsolutePath.TrimEnd('/').EndsWith(".git", StringComparison.OrdinalIgnoreCase)))
+            throw new FormatException("GitHub 更新地址需要使用 https://github.com/所有者/仓库名");
     }
 }
 
@@ -46,8 +53,16 @@ public sealed class VelopackUpdateClient : IAppUpdateClient
     private readonly UpdateManager _manager;
 
     public VelopackUpdateClient(UpdateSettings settings) : this(new UpdateManager(
-        new AppUpdateSource(settings.FeedUrl),
+        CreateSource(settings),
         new UpdateOptions { ExplicitChannel = settings.Channel, AllowVersionDowngrade = false })) { }
+
+    public static IUpdateSource CreateSource(UpdateSettings settings, IFileDownloader? downloader = null)
+    {
+        settings.Validate();
+        return settings.Source == "github"
+            ? new GithubSource(settings.FeedUrl, accessToken: null, prerelease: settings.IncludePrereleases, downloader: downloader)
+            : new AppUpdateSource(settings.FeedUrl, downloader);
+    }
 
     public VelopackUpdateClient(UpdateManager manager) => _manager = manager;
     public bool IsInstalled => _manager.IsInstalled;
@@ -58,7 +73,7 @@ public sealed class VelopackUpdateClient : IAppUpdateClient
         _manager.DownloadUpdatesAsync(update, progress, cancellationToken);
     public void PrepareRestart(VelopackAsset update) => _manager.WaitExitThenApplyUpdates(update, silent: false, restart: true);
 
-    private sealed class AppUpdateSource(string url) : SimpleWebSource(url, timeout: 30)
+    private sealed class AppUpdateSource(string url, IFileDownloader? downloader) : SimpleWebSource(url, downloader, timeout: 30)
     {
         // Feed requests are small; package downloads keep the longer timeout (minutes).
         public override Task<VelopackAssetFeed> GetReleaseFeed(IVelopackLogger logger, string? appId, string channel,
