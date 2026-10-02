@@ -60,7 +60,7 @@ label.send-control-group { cursor: pointer; }
 .send-tools-menu button:focus-visible { background: var(--bg-hover); outline-offset: -1px; }
 .send-bottom-bar { height: auto; min-height: 32px; padding: 4px 8px; gap: 10px; overflow: visible; }
 .send-input-status { display: flex; align-items: center; justify-content: flex-end; flex: 1; min-width: 0; flex-wrap: wrap; gap: 2px 8px; color: var(--text-muted); font-size: var(--ui-small-font-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
-#sendValidationTip { color: var(--error); }
+#sendValidationTip { color: var(--error); white-space: normal; flex-basis: 100%; text-align: left; max-height: 72px; overflow-y: auto; }
 .send-box { height: clamp(var(--send-min-h, 115px), calc(var(--send-box-h) + var(--send-window-growth)), calc(100% - var(--terminal-bar-h, 30px) - 66px)); min-height: var(--send-min-h, 115px); max-height: none; }
 .send-editor-body { min-height: 40px; }
 .center-pane { min-width: 0; }
@@ -75,6 +75,7 @@ label.send-control-group { cursor: pointer; }
 .modal-dialog { max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); overflow-y: auto; padding: 0 16px 16px; gap: 12px; line-height: 20px; }
 .modal-dialog > * { flex-shrink: 0; }
 .modal-title { min-height: 37px; gap: 12px; padding: 4px 0; font-size: var(--ui-font-size); line-height: 20px; text-align: left; }
+.modal-dialog > .modal-title { margin-right: calc(-1 * var(--modal-scrollbar, 0px)); }
 .modal-title > span { min-width: 0; overflow-wrap: anywhere; }
 .modal-dialog .form-item { gap: 6px; line-height: 20px; }
 .modal-dialog .form-item > label { line-height: 20px; }
@@ -101,6 +102,7 @@ label.send-control-group { cursor: pointer; }
 .workflow-add-controls, .workflow-status-indicator { flex-wrap: wrap; gap: 6px; }
 .workflow-add-controls > *, .workflow-status-indicator > * { flex-shrink: 0; }
 .workflow-status-indicator > span:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.workflow-status-indicator > span:first-child { min-width: 0; max-width: 100%; flex-shrink: 1; }
 .workflow-status-indicator #wfStateLabel { margin-left: auto; }
 .preset-list { --scrollbar-width: 10px; --scrollbar-inset: 3px; padding-right: 0; scrollbar-gutter: stable; }
 .preset-row { position: relative; min-height: 58px; flex-shrink: 0; }
@@ -235,3 +237,20 @@ body.theme-changing, body.theme-changing * { transition: none !important; }
   .app-title { display: none; }
   .statusbar-section { flex-wrap: wrap; }
 }
+.reliability-settings { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 8px 0; }
+.reliability-settings summary, .step-response summary { cursor: pointer; color: var(--text-sub); }
+.reliability-settings > .preferences-grid { margin: 12px 0; }
+.setting-note { margin: 6px 0; color: var(--text-muted); font-size: var(--ui-small-font-size); overflow-wrap: anywhere; }
+.preferences-dialog > .preferences-actions { position: sticky; bottom: -16px; background: var(--bg); padding: 8px 0; }
+.step-response { grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 4px; }
+.step-response[open] { display: grid; gap: 6px; }
+.step-response :is(input[type="text"], select) { width: 100%; min-width: 0; }
+.step-response > label:has(input[type="number"]) { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.step-response input[type="number"] { width: 82px; }
+#workflowRepeatCount { width: 65px; height: 22px; margin-left: 4px; }
+#workflowRepeatCount[hidden] { display: none; }
+#logRetentionStatus { color: var(--error); overflow-wrap: anywhere; }
+.errors-dialog { width: 520px; }
+.operation-error { display: grid; grid-template-columns: 65px minmax(0, 1fr); gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.operation-error time { color: var(--text-muted); }
+.operation-error span { color: var(--error); overflow-wrap: anywhere; white-space: pre-wrap; }

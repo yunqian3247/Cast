@@ -13,6 +13,7 @@ import { verifyUpdates } from './updates.test.mjs';
 import { verifyMonitorSettings } from './monitor-settings.test.mjs';
 import { verifyPortRefresh } from './port-refresh.test.mjs';
 import { verifyAuditRegressions } from './audit-regression.test.mjs';
+import { verifyReliability } from './reliability.test.mjs';
 const { chromium } = process.env.PEBREL_PLAYWRIGHT_MODULE
   ? await import(pathToFileURL(process.env.PEBREL_PLAYWRIGHT_MODULE)) : await import('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -576,6 +577,7 @@ try {
   await verifyUpdates(page,output);
   await verifyVirtualLogs(page,output);
   await verifyAuditRegressions(page);
+  await verifyReliability(page, output);
   assert.deepEqual(errors,[]);
   assert.equal(await page.locator('[title]').count(),0);
   console.log('PASS: bridge UI, presets, CRC, encoding count, search/export, workflow controls, pins, persistence, three viewports and modal screenshots');

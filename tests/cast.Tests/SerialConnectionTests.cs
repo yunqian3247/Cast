@@ -1,4 +1,6 @@
 using System.Threading.Channels;
+using System.Buffers.Binary;
+using System.Diagnostics;
 using cast.Core;
 using cast.Serial;
 
@@ -58,6 +60,37 @@ public sealed class SerialConnectionTests
         var result = new byte[count];
         for (var i = 0; i < count; i++) result[i] = await reader.ReadAsync(timeout.Token);
         return result;
+    }
+
+    [SerialPairFact]
+    public async Task ConfiguredSerialPairSoakPreservesEveryByteBothDirections()
+    {
+        var firstPort = Environment.GetEnvironmentVariable("CAST_TEST_PORT_A")!;
+        var secondPort = Environment.GetEnvironmentVariable("CAST_TEST_PORT_B")!;
+        Assert.False(firstPort.Equals(secondPort, StringComparison.OrdinalIgnoreCase));
+        var seconds = int.TryParse(Environment.GetEnvironmentVariable("CAST_SOAK_SECONDS"), out var requested) ? requested : 600;
+        Assert.InRange(seconds, 5, 86400);
+        await using var first = new SerialPortConnection();
+        await using var second = new SerialPortConnection();
+        var firstReceived = Channel.CreateBounded<byte>(16384);
+        var secondReceived = Channel.CreateBounded<byte>(16384);
+        var overflows = 0;
+        first.DataReceived += (_, e) => { foreach (var value in e.Bytes) if (!firstReceived.Writer.TryWrite(value)) Interlocked.Increment(ref overflows); };
+        second.DataReceived += (_, e) => { foreach (var value in e.Bytes) if (!secondReceived.Writer.TryWrite(value)) Interlocked.Increment(ref overflows); };
+        await first.OpenAsync(new SerialProfile { PortName = firstPort, BaudRate = 115200 });
+        await second.OpenAsync(new SerialProfile { PortName = secondPort, BaudRate = 115200 });
+        var timer = Stopwatch.StartNew();
+        long sequence = 0;
+        while (timer.Elapsed.TotalSeconds < seconds)
+        {
+            var payload = Enumerable.Range(0, 2048).Select(i => (byte)(i + sequence)).ToArray();
+            BinaryPrimitives.WriteInt64LittleEndian(payload, sequence++);
+            await Task.WhenAll(first.SendAsync(payload), second.SendAsync(payload));
+            var received = await Task.WhenAll(ReadBytes(firstReceived.Reader, payload.Length), ReadBytes(secondReceived.Reader, payload.Length));
+            Assert.All(received, actual => Assert.Equal(payload, actual));
+            Assert.Equal(0, Volatile.Read(ref overflows));
+        }
+        Assert.True(sequence > 0);
     }
 }
 

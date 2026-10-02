@@ -35,9 +35,11 @@ public sealed class AppDocument
             foreach (var step in workflow.Steps)
                 if (step is null || string.IsNullOrWhiteSpace(step.PresetId) || step.Wait is < 0 or > 86_400_000)
                     throw new FormatException("工作流步骤无效");
+                else step.Validate();
         }
         if (History.Any(value => value is null || value.Length > 1_048_576)) throw new FormatException("发送历史无效");
         _ = MonitorSettings.FromUi(Ui);
+        _ = ReliabilitySettings.FromUi(Ui);
         AppService.ValidateProfile(Profile, requirePort: false);
         if (JsonSerializer.Serialize(this, CapacityJson).Length > MaxSerializedChars)
             throw new FormatException("应用配置超过 64 Mi 字符，请减少预设内容或发送历史");
@@ -50,7 +52,7 @@ public sealed record MonitorSettings(int MaxLogCount = 10000, int RefreshInterva
         ReadInteger(ui, "maxLogCount", 10000, 100, 100000, "最大保留记录数"),
         ReadInteger(ui, "refreshIntervalMs", 50, 20, 1000, "界面刷新间隔"));
 
-    private static int ReadInteger(JsonObject ui, string key, int fallback, int min, int max, string label)
+    internal static int ReadInteger(JsonObject ui, string key, int fallback, int min, int max, string label)
     {
         if (!ui.TryGetPropertyValue(key, out var node)) return fallback;
         if (node is JsonValue value && value.TryGetValue<int>(out var number) && number >= min && number <= max)
@@ -59,8 +61,29 @@ public sealed record MonitorSettings(int MaxLogCount = 10000, int RefreshInterva
     }
 }
 
+public sealed record ReliabilitySettings(ReceiveFraming Framing, bool ContinuousLog = false, int LogFileMiB = 16, int LogFiles = 10)
+{
+    public static ReliabilitySettings FromUi(JsonObject ui)
+    {
+        string Text(string key, string fallback) => !ui.ContainsKey(key) ? fallback
+            : ui[key] is JsonValue value && value.TryGetValue<string>(out var text) ? text
+            : throw new FormatException($"{key} 格式无效");
+        var framing = new ReceiveFraming(Text("receiveFrameMode", "raw"),
+            MonitorSettings.ReadInteger(ui, "receiveIdleMs", 30, 5, 5000, "接收空闲间隔"),
+            MonitorSettings.ReadInteger(ui, "receiveFrameLength", 8, 1, 65536, "接收固定长度"), Text("receiveDelimiter", "0D 0A"));
+        framing.Validate();
+        var enabled = !ui.ContainsKey("continuousLog") ? false
+            : ui["continuousLog"] is JsonValue value && value.TryGetValue<bool>(out var flag) ? flag
+            : throw new FormatException("持续日志开关无效");
+        return new(framing, enabled,
+            MonitorSettings.ReadInteger(ui, "logFileMiB", 16, 1, 256, "日志文件大小"),
+            MonitorSettings.ReadInteger(ui, "logFiles", 10, 2, 100, "日志文件数量"));
+    }
+}
+
 public sealed class CommandPreset
 {
+    public const int MaxImportChars = AppDocument.MaxSerializedChars;
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "";
     public string Content { get; set; } = "";
@@ -71,6 +94,7 @@ public sealed class CommandPreset
 
     public static List<CommandPreset> ParseImport(string json)
     {
+        if (json.Length > MaxImportChars) throw new FormatException("预设文件超过 64 Mi 字符");
         try
         {
             using var document = JsonDocument.Parse(json);
@@ -106,10 +130,25 @@ public sealed class CommandStep
 {
     public string PresetId { get; set; } = "";
     public int Wait { get; set; } = 500;
+    public bool WaitForResponse { get; set; }
+    public string Response { get; set; } = "";
+    public string ResponseFormat { get; set; } = "text";
+    public int TimeoutMs { get; set; } = 1000;
+    public int Retries { get; set; }
+
+    public void Validate()
+    {
+        if (Response is null || Response.Length > 4096 || ResponseFormat is not ("text" or "hex")
+            || TimeoutMs is < 20 or > 600000 || Retries is < 0 or > 10 || (WaitForResponse && string.IsNullOrEmpty(Response)))
+            throw new FormatException("工作流应答规则无效：须指定应答，超时 20～600000 ms，重试 0～10 次");
+        if (WaitForResponse && ResponseFormat == "hex" && HexCodec.Parse(Response).Length == 0)
+            throw new FormatException("工作流 HEX 应答须包含完整字节");
+    }
 }
 
 public sealed record SendRequest(string Text, bool Hex = false, string Ending = "crlf", string CustomEnding = "", bool Lines = false);
 public sealed record SendPreview(int LineCount, long ByteCount);
 public sealed record AppLog(long Id, DateTimeOffset Timestamp, string Dir, string Text, string Hex, int ByteCount, string Source);
 public sealed record RunStatus(string Kind, bool Paused, int Step, int Round, string Name);
-public sealed record AppStatus(bool Connected, string Port, long Tx, long Rx, RunStatus Run, Serial.SerialPinState? Pins, string? PinError);
+public sealed record AppStatus(bool Connected, string Port, long Tx, long Rx, RunStatus Run, Serial.SerialPinState? Pins, string? PinError,
+    long DroppedLogs = 0, string? LogError = null, long LogDropped = 0, string? LogDirectory = null);

@@ -5,10 +5,19 @@ param(
     [string]$Channel,
     [ValidateSet('static', 'github')]
     [string]$Source,
-    [bool]$IncludePrereleases
+    [bool]$IncludePrereleases,
+    [ValidatePattern('^[A-Fa-f0-9]{40}$')]
+    [string]$CertificateThumbprint,
+    [string]$SignTemplate,
+    [string]$AzureTrustedSignFile,
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = 'Stop'
+$signingMethods = @($CertificateThumbprint, $SignTemplate, $AzureTrustedSignFile) | Where-Object { $_ }
+if (@($signingMethods).Count -gt 1) { throw 'Select one signing method.' }
+if ($RequireSignature -and @($signingMethods).Count -eq 0) { throw 'RequireSignature needs a certificate or signing service.' }
+if ($AzureTrustedSignFile -and !(Test-Path -LiteralPath $AzureTrustedSignFile -PathType Leaf)) { throw 'Azure Trusted Signing metadata file is missing.' }
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $sourceSettings = Get-Content -LiteralPath (Join-Path $repoRoot 'src/cast.Desktop/update-settings.json') -Raw | ConvertFrom-Json
 if (!$PSBoundParameters.ContainsKey('FeedUrl')) { $FeedUrl = $sourceSettings.feedUrl }
@@ -38,7 +47,20 @@ try {
     dotnet publish src/cast.Desktop -c Release -r win-x64 --self-contained true "-p:Version=$Version" -o $publishDir
     if ($LASTEXITCODE) { throw 'Publish failed.' }
     @{ feedUrl = $FeedUrl; channel = $Channel; source = $Source; includePrereleases = $IncludePrereleases } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $publishDir 'update-settings.json') -Encoding utf8
-    dotnet tool run vpk -- pack --packId cast --packTitle cast --packAuthors cast --packVersion $Version --packDir $publishDir --mainExe cast.exe --runtime win-x64 --channel $Channel --icon src/cast.Desktop/Assets/cast.ico --framework webview2 --outputDir $releaseDir
+    $packArguments = @('tool', 'run', 'vpk', '--', 'pack', '--packId', 'cast', '--packTitle', 'cast', '--packAuthors', 'cast', '--packVersion', $Version,
+        '--packDir', $publishDir, '--mainExe', 'cast.exe', '--runtime', 'win-x64', '--channel', $Channel, '--icon', 'src/cast.Desktop/Assets/cast.ico', '--framework', 'webview2', '--outputDir', $releaseDir)
+    if ($CertificateThumbprint) { $packArguments += @('--signParams', "/sha1 $CertificateThumbprint /fd sha256 /tr https://timestamp.digicert.com /td sha256") }
+    if ($SignTemplate) { $packArguments += @('--signTemplate', $SignTemplate) }
+    if ($AzureTrustedSignFile) { $packArguments += @('--azureTrustedSignFile', (Resolve-Path -LiteralPath $AzureTrustedSignFile).Path) }
+    & dotnet @packArguments
     if ($LASTEXITCODE) { throw 'Velopack packaging failed.' }
+    if (@($signingMethods).Count -gt 0) {
+        $signedFiles = @((Join-Path $publishDir 'cast.exe')) + @(Get-ChildItem -LiteralPath $releaseDir -Filter '*Setup.exe' | ForEach-Object FullName)
+        foreach ($signedFile in $signedFiles) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $signedFile
+            if ($signature.Status -ne 'Valid') { throw "Signature verification failed: $signedFile ($($signature.Status))" }
+            if ($CertificateThumbprint -and $signature.SignerCertificate.Thumbprint -ne $CertificateThumbprint) { throw "Unexpected signing certificate: $signedFile" }
+        }
+    }
     Write-Host "Release ready: $releaseDir"
 } finally { Pop-Location }

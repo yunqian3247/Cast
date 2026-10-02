@@ -57,5 +57,38 @@
     requestAnimationFrame(() => requestAnimationFrame(() => { const elapsed = performance.now() - start; hideModal('settingsModal'); resolve(elapsed); }));
   });
   probe.clear = () => { const start = performance.now(); logs = []; renderLogs(); return performance.now() - start; };
+  // Run the former algorithm and the current production function in this WebView,
+  // using identical retained records and batches. This isolates append cost from
+  // bridge timing, font loading, rendering and process-memory fluctuations.
+  probe.appendComparison = () => {
+    const saved = { logs, logTextBytes, logBudgetSource, logRevision, anchor: logView.externalAnchor };
+    const seed = logs.slice(-10000), batch = seed.slice(-5), repetitions = 1000;
+    if (seed.length !== 10000) throw new Error('Append comparison requires 10000 retained records');
+    let legacy = seed.slice(), legacyBytes = 0;
+    const former = () => {
+      const combined = legacy.concat(batch);
+      let start = combined.length, bytes = 0;
+      while (start > 0 && combined.length - start < maxLogCount) {
+        const log = combined[start - 1], size = 2 * (log.text.length + log.hex.length);
+        if (bytes + size > MAX_LOG_TEXT_BYTES && start < combined.length) break;
+        bytes += size; start--;
+      }
+      legacy = combined.slice(start); legacyBytes = bytes;
+    };
+    try {
+      logs = seed.slice(); logBudgetSource = logs;
+      logTextBytes = logs.reduce((sum,log)=>sum+2*(log.text.length+log.hex.length),0);
+      const begin = performance.now();
+      for (let i=0;i<repetitions;i++) former();
+      const formerMs = performance.now()-begin, currentBegin = performance.now();
+      for (let i=0;i<repetitions;i++) appendLogs(batch);
+      const currentMs = performance.now()-currentBegin;
+      const equal = logs.length===legacy.length && logTextBytes===legacyBytes && logs.every((log,i)=>log===legacy[i]);
+      if (!equal) throw new Error('Append implementations produced different retained data');
+      return { repetitions, batchSize:batch.length, retained:seed.length, formerMs, currentMs, speedup:formerMs/currentMs, equal };
+    } finally {
+      logs=saved.logs;logTextBytes=saved.logTextBytes;logBudgetSource=saved.logBudgetSource;logRevision=saved.logRevision;logView.externalAnchor=saved.anchor;
+    }
+  };
   return probe.snapshot();
 })();

@@ -13,6 +13,12 @@
 | 布局 | 880 × 560、1120 × 700、1280 × 800、1536 × 864、1920 × 1080、2560 × 1440，面板收展、发送区调节、弹窗和 150% 像素比例截图 |
 | 桌面 | 实际 WebView2 加载、C# 消息往返、收发、断开、外部导航阻止 |
 
+2026-10-02 审核问题修复：Release 全量 140 项通过、3 项设备测试因配置缺失跳过，Playwright 全流程通过。新增回归覆盖 Modbus 拆包与合包、固定/分隔符/空闲模式及残留，普通配置保存保留半帧，ASCII/GBK 严格编码与非法 Unicode，快速及跨读取应答、重试、超时停止、取消和自定义轮数，JSONL 退出刷新、轮转、磁盘错误和队列超限，超过 4 MB 预设的实际 WebView2 分块导入及文件导出往返、Unicode 边界、CSV 公式保护、完整错误详情、深浅主题和最小窗口。字体检查覆盖随包子集、全字体后备字符、等宽时间列和真实渲染字体。TRX 位于 `artifacts/audit-fixes-final/`，新增界面截图为 `web-reliability-*.png`。
+
+Windows CI 已加入 .NET、真实 WebView2、Playwright 与性能工具构建，工作流 YAML 和本地对应命令已核对；远程执行待提交后触发。WebView2 安装使用微软签名引导程序和官方 `/silent /install` 参数，参见[微软分发说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。签名脚本通过 PowerShell 语法解析及缺少必需签名配置的提前失败验证，实际签名仍待有效证书或服务配置。
+
+1 万条短/长记录性能结果见[本轮性能记录](performance-audit-2026-10-02.md)。原始报告位于 `artifacts/performance/current-audit/` 和 `artifacts/performance/audit-fixes-final/`。记录追加改善与整体内存分别报告，实机吞吐继续按下方设备验收执行。
+
 2026-09-14 验证：Release 共 33 项通过，1 项真实串口对测试跳过；Playwright 全流程通过。运行 `dotnet test cast.sln -c Release` 和 `npm --prefix tests/web test` 可复验。截图输出到本地 `artifacts/pebrel-checks`。
 
 2026-09-27 审核问题修复：Release 共 117 项通过、2 项实体串口测试因设备配置缺失跳过；Playwright 全流程通过。回归覆盖语法与业务字段损坏后的有效备份恢复、当前备份优先于旧版迁移、恢复后保护备份及保留损坏文件，超过 4 MB 配置通过真实 WebView2 分块保存并恢复，Unicode 分块边界、乱序/中止、整份容量超限保留原文件，32 KB 在 9600 的超过 30 秒替身发送与主动停止，20,000 行单次校验及防抖和过时结果失效，路径选择长等待、重复导出及失败重试，大小 CSV 的单次 UTF-8 BOM，以及原生关闭的最终快照、保存队列、失败保留窗口和偏好。对话框长等待采用旧期限缩放为 30 ms、回复延后 100 ms 的自动化验证；串口时序与取消使用替身，实体设备边界沿用设备验收项。
@@ -60,6 +66,10 @@ dotnet test tests/cast.Tests -c Release --filter FullyQualifiedName~ConfiguredSe
 ```
 
 该用例验证双向字节传输和关闭后重新打开。界面操作还需核对 USB 热插拔、自定义波特率支持、DTR/RTS 输出以及 CTS/DSR 输入。
+
+同一过滤条件还运行新增的长时间双向验收，默认 115200、每轮双向各 2048 字节、持续 600 秒。每帧包含递增序号，逐字节核对丢失、重复或乱序；接收队列有界并核对溢出计数。可用 `$env:CAST_SOAK_SECONDS = "3600"` 调整持续时间（5～86400 秒），测试专用串口对两端须使用相同参数。
+
+签名及更新验收使用有效发布证书和两个递增版本的 Velopack 包：在独立 Windows 环境核对安装包及应用签名，安装旧版，保存预设、工作流和输入，检查并下载新版，执行安装重启，再核对版本、配置恢复与持续日志。物理引脚电平、设备拔插和多显示器 DPI 切换按真实设备记录操作、期望及结果。本轮外部设备、证书和跨版本安装环境尚待配置，这些条件保持待验收。
 
 ## 边界
 

@@ -135,7 +135,7 @@ public sealed class AppUpdateService : IDisposable
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.WriteLine(ex);
+            DiagnosticLog.Write("检查更新", ex);
             Set(new("error", "检查更新失败，请检查网络或更新源后重试", CanCheck: true));
         }
         finally { _operation.Release(); }
@@ -162,7 +162,7 @@ public sealed class AppUpdateService : IDisposable
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.WriteLine(ex);
+            DiagnosticLog.Write("下载更新", ex);
             Set(new("error", "下载更新失败，请检查网络或更新源后重试", _available?.TargetFullRelease.Version.ToString(),
                 CanCheck: true, CanDownload: _available is not null));
         }

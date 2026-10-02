@@ -1,0 +1,54 @@
+name: Windows validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tests/web/package-lock.json
+      - name: Ensure WebView2 Runtime
+        shell: pwsh
+        run: |
+          $runtimePath = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/EdgeWebView/Application'
+          if (!(Test-Path -LiteralPath $runtimePath)) {
+            $bootstrapper = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapper
+            $signature = Get-AuthenticodeSignature -LiteralPath $bootstrapper
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'Invalid WebView2 bootstrapper signature.' }
+            $installer = Start-Process -FilePath $bootstrapper -ArgumentList '/silent','/install' -WindowStyle Hidden -PassThru -Wait
+            if ($installer.ExitCode -ne 0) { throw "WebView2 install failed: $($installer.ExitCode)" }
+          }
+      - name: .NET regression
+        run: dotnet test cast.sln -c Release --logger trx --results-directory artifacts/ci
+      - name: Browser regression
+        shell: pwsh
+        run: |
+          npm --prefix tests/web ci
+          if ($LASTEXITCODE) { throw 'npm ci failed' }
+          npx --prefix tests/web playwright install chromium
+          if ($LASTEXITCODE) { throw 'Chromium install failed' }
+          npm --prefix tests/web test
+          if ($LASTEXITCODE) { throw 'Browser tests failed' }
+      - name: Performance tool build
+        run: dotnet build tests/cast.Performance -c Release
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-results
+          path: |
+            artifacts/ci
+            artifacts/pebrel-checks
+            artifacts/startup-checks

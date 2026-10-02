@@ -8,7 +8,8 @@
       <nav class="titlebar-tools" aria-label="应用工具">
         <button class="titlebar-icon-btn" id="btnOpenSettings" aria-label="设置"><i data-lucide="settings"></i></button>
         <button class="titlebar-icon-btn" id="btnToggleTheme" aria-label="切换深色模式" aria-pressed="false"><i data-lucide="moon"></i></button>
-        <button class="titlebar-icon-btn" id="btnOpenShortcuts" aria-label="操作提示"><i data-lucide="keyboard"></i></button>
+          <button class="titlebar-icon-btn" id="btnOpenShortcuts" aria-label="操作提示"><i data-lucide="keyboard"></i></button>
+          <button class="titlebar-icon-btn" id="btnOpenErrors" aria-label="查看操作错误记录"><i data-lucide="triangle-alert"></i></button>
         <button class="titlebar-icon-btn" id="btnOpenAbout" aria-label="关于 cast"><i data-lucide="info"></i></button>
       </nav>
     </div>
@@ -203,7 +204,7 @@
               </label>
             </div>
             <div class="send-input-status" role="status">
-              <span id="sendValidationTip" style="display:none;">格式错误</span>
+              <span id="sendValidationTip" role="status" aria-live="polite" style="display:none;">格式错误</span>
               <span id="sendByteCounter">0 行 · 0 字节</span>
             </div>
 
@@ -255,8 +256,9 @@
                 <select id="selWfMode" style="height:22px;padding:0 4px;">
                   <option value="once">单次执行</option>
                   <option value="loop">无限循环</option>
-                  <option value="count">循环 5 轮</option>
+                  <option value="count">指定次数</option>
                 </select>
+                <input id="workflowRepeatCount" type="number" min="1" max="1000000" value="5" aria-label="工作流循环次数" hidden>
               </span>
               <span id="wfStateLabel">空闲</span>
             </div>
@@ -295,7 +297,7 @@
       </div>
 
       <div class="statusbar-section">
-        <span id="statusChannel">发送通道: 就绪</span>
+        <span id="statusChannel">发送通道: 就绪</span><span id="logRetentionStatus" role="status"></span>
         <span>|</span>
         <span id="statusStats">TX: 0 B  |  RX: 0 B</span>
         <button id="btnResetStat" style="height:16px;padding:0 3px;border:none;background:transparent;color:var(--text-faint);cursor:pointer;" aria-label="重置计数器">[清零]</button>
@@ -440,6 +442,7 @@
             <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
               <input type="checkbox" id="chkExportProto" checked> 包含协议解析
             </label>
+            <label class="preference-check"><input type="checkbox" id="chkCsvSafe" checked> CSV 以文本方式保护公式前缀</label>
           </div>
         </div>
       </div>
@@ -478,6 +481,20 @@
       <div class="form-item"><label for="cfgMaxLogCount">最大保留记录数</label><input type="number" id="cfgMaxLogCount" min="100" max="100000" step="1" value="10000" required></div>
       <div class="form-item"><label for="cfgRefreshIntervalMs">界面刷新间隔 (ms)</label><input type="number" id="cfgRefreshIntervalMs" min="20" max="1000" step="1" value="50" required></div>
     </div>
+    <details class="reliability-settings">
+      <summary>接收分帧与持续日志</summary>
+      <div class="preferences-grid">
+        <div class="form-item"><label for="cfgReceiveMode">接收分帧</label><select id="cfgReceiveMode"><option value="raw">原始读取</option><option value="auto">自动（Modbus / 预设 / 换行）</option><option value="fixed">固定长度</option><option value="delimiter">HEX 分隔符</option><option value="idle">空闲间隔</option></select></div>
+        <div class="form-item"><label for="cfgReceiveIdle">空闲输出间隔 (ms)</label><input id="cfgReceiveIdle" type="number" min="5" max="5000" value="30" required></div>
+        <div class="form-item"><label for="cfgReceiveLength">固定长度 (字节)</label><input id="cfgReceiveLength" type="number" min="1" max="65536" value="8" required></div>
+        <div class="form-item"><label for="cfgReceiveDelimiter">HEX 分隔符</label><input id="cfgReceiveDelimiter" type="text" value="0D 0A" maxlength="256"></div>
+        <div class="form-item"><label for="cfgLogFileMiB">单个日志大小 (MiB)</label><input id="cfgLogFileMiB" type="number" min="1" max="256" value="16" required></div>
+        <div class="form-item"><label for="cfgLogFiles">轮转文件数量</label><input id="cfgLogFiles" type="number" min="2" max="100" value="10" required></div>
+      </div>
+      <label class="preference-check"><input id="cfgContinuousLog" type="checkbox">持续保存通信日志到本机</label>
+      <p class="setting-note">达到文件数量上限时删除最早文件。分帧残留在空闲超时或断开时输出；单帧缓存上限 64 KiB。</p>
+      <button id="btnOpenLogs">打开通信日志目录</button>
+    </details>
     <div class="preferences-sidebars">
       <div class="preference-sidebar"><label for="cfgLeftFunction">左侧功能</label><select id="cfgLeftFunction"><option value="presets">预设指令</option><option value="workflow">工作流</option></select><label class="preference-check"><input type="checkbox" id="cfgLeftDefaultVisible">启动时显示</label></div>
       <div class="preference-sidebar"><label for="cfgRightFunction">右侧功能</label><select id="cfgRightFunction"><option value="workflow">工作流</option><option value="presets">预设指令</option></select><label class="preference-check"><input type="checkbox" id="cfgRightDefaultVisible">启动时显示</label></div>
@@ -527,5 +544,11 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="errorsModal" aria-labelledby="errorsTitle">
+  <div class="modal-dialog errors-dialog"><div class="modal-title"><span id="errorsTitle">操作错误记录</span><button id="btnCloseErrors" class="modal-close" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <p class="setting-note">本次运行最近 100 条操作错误。宿主诊断文件保留详细异常，按大小轮转。</p>
+    <div id="operationErrors" role="log" aria-live="polite"></div><button id="btnOpenDiagnostics">打开诊断目录</button>
+  </div>
+</div>
 <div id="controlTooltip" class="control-tooltip" role="tooltip" hidden></div>
-<script src="lucide.min.js"></script><script src="crc.min.js"></script><script src="virtual-log.js"></script><script src="app.js"></script></body></html>
+<script src="lucide.min.js"></script><script src="crc.min.js"></script><script src="data-rules.js"></script><script src="virtual-log.js"></script><script src="app.js"></script></body></html>

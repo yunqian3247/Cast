@@ -7,6 +7,35 @@ namespace cast.Desktop.Tests;
 
 public sealed class AuditWebViewTests
 {
+    [Fact]
+    public void LargePresetImportUsesRealChunkBridge()
+    {
+        Run(async (form, _, directory) =>
+        {
+            var presets = Enumerable.Range(0, 5).Select(i => new CommandPreset { Id = $"large-{i}", Name = "分块预设", Content = new string('A', 900000) + "😀" }).ToList();
+            var text = JsonSerializer.Serialize(presets, AppService.Json);
+            var path = Path.Combine(directory, "large-presets.json"); await File.WriteAllTextAsync(path, text);
+            var session = new PresetImportSession(await PresetImportSession.ReadAsync(path));
+            // Supply the file-selection result; chunk transfer and parsing use the real host.
+            var field = typeof(MainForm).GetField("_import", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            field.SetValue(form, session);
+            await form.Browser.ExecuteScriptAsync($$"""
+                window.importDone=false;(async()=>{
+                  const id={{JsonSerializer.Serialize(session.Id)}};const parts=[];let offset=0;
+                  while(offset<{{session.Length}}){const reply=await request('importChunk',{id,offset});parts.push(reply.content);offset+=reply.content.length;}
+                  const presets=validatePresets(JSON.parse(parts.join('')));
+                  window.importCount=presets.length;window.importUnicode=presets.every(p=>p.content.endsWith('😀'));
+                  await request('importFinish',{id});window.importDone=true;
+                })().catch(error=>window.importError=error.message);
+                """);
+            await WaitScript(form, "window.importDone===true");
+            Assert.Equal("5", await form.Browser.ExecuteScriptAsync("window.importCount"));
+            Assert.Equal("true", await form.Browser.ExecuteScriptAsync("window.importUnicode"));
+            Assert.Null(field.GetValue(form));
+            form.Close();
+        }, _ => { });
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

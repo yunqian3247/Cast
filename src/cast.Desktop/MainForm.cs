@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Drawing.Text;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using cast.Core;
@@ -39,6 +40,9 @@ public sealed class MainForm : Form
     private bool _nativeNonNormal;
     private LogExportSession? _export;
     private bool _exportOpening, _closePending;
+    private bool _importOpening;
+    private PresetImportSession? _import;
+    private long _bridgeDroppedLogs;
     private readonly DocumentSaveBuffer _documentTransfer = new();
     private TaskCompletionSource<string?>? _closeResult;
     private string? _closeId;
@@ -50,7 +54,7 @@ public sealed class MainForm : Form
 
     public MainForm(string? dataDirectory = null, ISerialConnection? connection = null, IPortCatalog? catalog = null)
     {
-        _loadingFonts.AddFontFile(Path.Combine(AppContext.BaseDirectory, "Web", "fonts", "SarasaGothicSC-Regular.ttf"));
+        _loadingFonts.AddFontFile(Path.Combine(AppContext.BaseDirectory, "Web", "fonts", "SarasaGothicSC-Startup.ttf"));
         _loadingFont = new Font(_loadingFonts.Families[0], 9F);
         _loading.Font = _loadingFont;
         Opacity = 0;
@@ -143,6 +147,9 @@ public sealed class MainForm : Form
             core.Settings.IsZoomControlEnabled = false;
             core.Settings.AreBrowserAcceleratorKeysEnabled = false;
             core.Settings.IsNonClientRegionSupportEnabled = true;
+            try { core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low; }
+            catch (NotImplementedException) { /* Earlier runtimes keep their default memory policy. */ }
+            catch (COMException ex) when (ex.ErrorCode == unchecked((int)0x80004002)) { }
             core.SetVirtualHostNameToFolderMapping("cast.example", Path.Combine(AppContext.BaseDirectory, "Web"), CoreWebView2HostResourceAccessKind.Deny);
             core.NavigationStarting += (_, e) =>
             {
@@ -151,7 +158,7 @@ public sealed class MainForm : Form
                 _ready = _pageInitialized = _pageReady = _navigationCompleted = false;
                 _preparingPage = _startupFramePrepared = false;
                 _pageGeneration++;
-                _documentTransfer.Abort(); ExportAbort();
+                _documentTransfer.Abort(); ExportAbort(); _import = null;
                 _poll.Stop();
                 _events.Stop();
                 lock (_eventSync) { _pendingLogs.Clear(); _pendingLogBytes = 0; _pendingStatus = null; }
@@ -202,11 +209,11 @@ public sealed class MainForm : Form
             if (frame.Length == 0) throw new IOException("主界面首帧尚未完成");
             _startupFramePrepared = true;
             _startupTimeout.Stop();
-            _ready = true;
             _poll.Start(); _events.Start();
             _service.PublishStatus();
             Post(new { @event = "window", data = WindowStatus() });
             RevealStartup();
+            _ready = true;
         }
         catch (Exception ex)
         {
@@ -312,11 +319,15 @@ public sealed class MainForm : Form
                 "exportAbort" => ExportAbort(),
                 "export" => await Export(data),
                 "import" => await Import(),
+                "importChunk" => ImportChunk(data),
+                "importFinish" or "importAbort" => ImportFinish(data),
+                "openLogs" => OpenDirectory(_service.LogDirectory),
+                "openDiagnostics" => OpenDirectory(DiagnosticLog.DirectoryPath),
                 _ => throw new FormatException("未知操作")
             };
             Post(new { id, ok = true, result });
         }
-        catch (Exception ex) { Post(new { id, ok = false, error = ex.Message }); }
+        catch (Exception ex) { DiagnosticLog.Write("界面操作", ex); Post(new { id, ok = false, error = ex.Message }); }
     }
 
     private async Task<object> InitializePageAsync()
@@ -424,7 +435,7 @@ public sealed class MainForm : Form
     private async Task<object> Disconnect() { await _service.DisconnectAsync(); return _service.Status(); }
     private async Task<object> Send(JsonElement data) { await _service.SendAsync(Read<SendRequest>(data)); return _service.Status(); }
     private object Repeat(JsonElement data) { _service.StartRepeat(Read<SendRequest>(data.GetProperty("request")), data.GetProperty("interval").GetInt32()); return _service.Status(); }
-    private object Workflow(JsonElement data) { _service.StartWorkflow(data.GetProperty("id").GetString()!, data.GetProperty("mode").GetString()!, data.GetProperty("stepOnly").GetBoolean()); return _service.Status(); }
+    private object Workflow(JsonElement data) { _service.StartWorkflow(data.GetProperty("id").GetString()!, data.GetProperty("mode").GetString()!, data.GetProperty("stepOnly").GetBoolean(), data.TryGetProperty("count", out var count) ? count.GetInt32() : 5); return _service.Status(); }
     private object Pause(JsonElement data) { _service.Pause(data.GetProperty("paused").GetBoolean()); return _service.Status(); }
     private object Step() { _service.Step(); return _service.Status(); }
     private object Stop() { _service.Stop(); return _service.Status(); }
@@ -481,7 +492,7 @@ public sealed class MainForm : Form
     }
     private object Encode(JsonElement data) { var payload = _service.Encode(Read<SendRequest>(data)); return new { hex = HexCodec.Format(payload.Bytes), byteCount = payload.Bytes.Length }; }
     private object Pins(JsonElement data) { _service.SetPins(data.GetProperty("dtr").GetBoolean(), data.GetProperty("rts").GetBoolean()); return _service.Status(); }
-    private object ResetStats() { _service.ResetStats(); return true; }
+    private object ResetStats() { Interlocked.Exchange(ref _bridgeDroppedLogs, 0); _service.ResetStats(); return true; }
     private object ClearLogs()
     {
         _service.ClearLogs();
@@ -558,10 +569,36 @@ public sealed class MainForm : Form
 
     private async Task<object?> Import()
     {
+        if (_import is not null || _importOpening) throw new InvalidOperationException("已有预设导入正在进行");
         using var dialog = new OpenFileDialog { Filter = "预设文件 (*.json)|*.json", CheckFileExists = true };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return null;
-        if (new FileInfo(dialog.FileName).Length > 4_194_304) throw new FormatException("预设文件超过 4 MB");
-        return CommandPreset.ParseImport(await File.ReadAllTextAsync(dialog.FileName));
+        _importOpening = true;
+        try
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return null;
+            var text = await PresetImportSession.ReadAsync(dialog.FileName);
+            var presets = CommandPreset.ParseImport(text);
+            if (_closing || _closePending) throw new InvalidOperationException("cast 正在关闭");
+            if (text.Length <= PresetImportSession.ChunkChars) return presets;
+            _import = new(JsonSerializer.Serialize(presets, new JsonSerializerOptions(AppService.Json) { WriteIndented = false }));
+            return new { transferId = _import.Id, length = _import.Length };
+        }
+        finally { _importOpening = false; }
+    }
+
+    private object ImportChunk(JsonElement data) => new { content = (_import ?? throw new InvalidOperationException("预设传输已结束"))
+        .Chunk(data.GetProperty("id").GetString()!, data.GetProperty("offset").GetInt32()) };
+
+    private object ImportFinish(JsonElement data)
+    {
+        if (_import?.Id == data.GetProperty("id").GetString()) _import = null;
+        return true;
+    }
+
+    private static object OpenDirectory(string path)
+    {
+        Directory.CreateDirectory(path);
+        Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+        return true;
     }
 
     private void OnServiceChanged(string name, object data)
@@ -577,7 +614,7 @@ public sealed class MainForm : Form
                     var log = (AppLog)data;
                     _pendingLogs.Enqueue(log); _pendingLogBytes += AppService.LogTextBytes(log);
                     while (_pendingLogs.Count > _service.MonitorSettings.MaxLogCount || (_pendingLogBytes > AppService.MaxLogTextBytes && _pendingLogs.Count > 1))
-                        _pendingLogBytes -= AppService.LogTextBytes(_pendingLogs.Dequeue());
+                    { _pendingLogBytes -= AppService.LogTextBytes(_pendingLogs.Dequeue()); Interlocked.Increment(ref _bridgeDroppedLogs); }
                 }
             }
             return;
@@ -595,9 +632,8 @@ public sealed class MainForm : Form
         {
             var batch = new List<AppLog>();
             long batchBytes = 0;
-            while (_pendingLogs.Count > 0 && _pendingLogs.Peek().Id <= _lastLogSentId) {
+            while (_pendingLogs.Count > 0 && _pendingLogs.Peek().Id <= _lastLogSentId)
                 _pendingLogBytes -= AppService.LogTextBytes(_pendingLogs.Dequeue());
-            }
             while (_pendingLogs.Count > 0)
             {
                 var next = _pendingLogs.Peek();
@@ -611,7 +647,7 @@ public sealed class MainForm : Form
             status = _pendingStatus; _pendingStatus = null;
         }
         if (logs.Length > 0) { _lastLogSentId = logs[^1].Id; Post(new { @event = "logs", data = logs }); }
-        if (status is not null) Post(new { @event = "status", data = status });
+        if (status is AppStatus appStatus) Post(new { @event = "status", data = appStatus, bridgeDroppedLogs = Interlocked.Read(ref _bridgeDroppedLogs) });
     }
 
     private void Post(object data)

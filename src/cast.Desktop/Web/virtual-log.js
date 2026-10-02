@@ -65,10 +65,11 @@ class VirtualLogView {
   }
 
   setItems(items, revision, followEnabled) {
-    const anchor = this.anchor();
-    const changed = this.items !== items;
+    const anchor = this.externalAnchor || this.anchor(); this.externalAnchor = null;
+    const changed = this.items !== items || this.itemCount !== items.length || this.lastItemId !== items.at(-1)?.id;
     const layoutChanged = this.revision !== revision;
     this.items = items;
+    this.itemCount = items.length; this.lastItemId = items.at(-1)?.id;
     if (layoutChanged) { this.revision = revision; this.invalidate(false); }
     else if (changed) this.rebuildOffsets();
     if (followEnabled && !this.followEnabled) this.follow = true;

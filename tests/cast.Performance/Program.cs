@@ -113,6 +113,7 @@ internal static class Program
                 results.Add(new { stage = "live", sent, startId, lastId, sendElapsedMs, drainMs = drain.Elapsed.TotalMilliseconds,
                     probeRoundTripMs = latencies, memorySamples = samples, memory = Memory(form), page = livePage, backendRows = form.Service.Logs.Count });
                 Console.WriteLine($"{kind}: live {sent} records, max probe delay {latencies.Max():F0} ms");
+                results.Add(new { stage = "append-comparison", timing = await Evaluate(form, "perfProbe.appendComparison()") });
                 form.Service.ClearLogs();
                 results.Add(new { stage = "clear", elapsedMs = await Evaluate(form, "perfProbe.clear()") });
                 await Task.Delay(3000);

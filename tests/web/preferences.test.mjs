@@ -171,6 +171,13 @@ export async function verifyPreferences(page, output) {
     assert.ok(fonts.some(font => font.familyName === 'Sarasa Gothic SC' && font.isCustomFont && font.glyphCount > 0), `actual bundled font for ${selector}: ${JSON.stringify(fonts)}`);
   }
   assert.equal(await page.locator('#manualInput').evaluate(el => getComputedStyle(el).fontFamily), await page.locator('.log-text').first().evaluate(el => getComputedStyle(el).fontFamily));
+  await page.evaluate(async () => {
+    const node=document.createElement('span');node.id='font-fallback-check';node.style.fontFamily='"Sarasa Gothic SC"';node.textContent='龘';document.body.append(node);await document.fonts.ready;
+  });
+  const fallbackNode = await cdp.send('DOM.querySelector', { nodeId:root.nodeId,selector:'#font-fallback-check' });
+  const fallbackFonts = await cdp.send('CSS.getPlatformFontsForNode', { nodeId:fallbackNode.nodeId });
+  assert.ok(fallbackFonts.fonts.some(font=>font.familyName==='Sarasa Gothic SC'&&font.isCustomFont&&font.glyphCount>0), 'full bundled font covers characters outside the UI subset');
+  await page.locator('#font-fallback-check').evaluate(el=>el.remove());
   await page.evaluate(() => document.getElementById('workspaceBody').classList.remove('hide-left', 'hide-right'));
   for (const scale of [1, 1.25, 1.5, 2]) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1120, height: 700, deviceScaleFactor: scale, mobile: false });

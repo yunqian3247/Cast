@@ -68,8 +68,14 @@ internal sealed class StartupSplash : Form
     {
         CenterOnScreen();
         UpdateShape();
-        if (_reveal is not null) BeginAnimation();
+        if (_reveal is not null && !_animation.Enabled) BeginAnimation();
         base.OnShown(e);
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        if (Visible && _reveal is not null && !_animation.Enabled) BeginAnimation();
+        base.OnVisibleChanged(e);
     }
 
     protected override void OnSizeChanged(EventArgs e)

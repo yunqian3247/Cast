@@ -23,6 +23,7 @@ public sealed class AppService : IAsyncDisposable
     private readonly object _sync = new();
     private readonly object _changeSync = new();
     private readonly object _portSync = new();
+    private readonly object _receiveSync = new();
     private Task<IReadOnlyList<PortInfo>>? _portScan;
     public const long MaxLogTextBytes = 16 * 1024 * 1024;
     private MonitorSettings _monitorSettings = new();
@@ -35,7 +36,15 @@ public sealed class AppService : IAsyncDisposable
     private SemaphoreSlim _runSignal = new(0, 1);
     private RunStatus _run = new("idle", false, -1, 0, "");
     private Decoder _decoder = TextCodec.GetEncoding(TextEncodingKind.Utf8).GetDecoder();
-    private long _tx, _rx, _logId;
+    private long _tx, _rx, _logId, _droppedLogs;
+    private ReceiveFramer _framer = new(new());
+    private ReliabilitySettings _reliability = new(new());
+    private string[] _framePresets = [];
+    private readonly System.Threading.Timer _receiveIdle;
+    private DateTimeOffset _receiveTimestamp;
+    private ContinuousLogWriter? _continuousLog;
+    private ResponseWaiter? _responseWaiter;
+    public string LogDirectory { get; }
     private bool _disposed, _disconnecting, _saving, _transportUnavailable;
     public AppDocument Document { get; private set; } = new();
     public event Action<string, object>? Changed;
@@ -44,6 +53,8 @@ public sealed class AppService : IAsyncDisposable
     public AppService(string directory, ISerialConnection? connection = null, IPortCatalog? catalog = null, string? legacyPath = null)
     {
         _path = Path.Combine(directory, "cast.json");
+        LogDirectory = Path.Combine(directory, "Logs");
+        _receiveIdle = new(_ => { lock (_receiveSync) if (!_disposed) FlushReceiveCore(); }, null, Timeout.Infinite, Timeout.Infinite);
         _legacyPath = legacyPath;
         _connection = connection ?? new SerialPortConnection();
         _catalog = catalog ?? new SerialPortCatalog();
@@ -58,7 +69,7 @@ public sealed class AppService : IAsyncDisposable
         {
             if (_legacyPath is not null) await LegacyDataMigration.MigrateAsync(_legacyPath, _path);
             var saved = await _store.LoadAsync(_path);
-            if (saved is not null) { saved.Validate(); Document = saved; ApplyMonitorSettings(saved); }
+            if (saved is not null) { saved.Validate(); Document = saved; ApplyMonitorSettings(saved); await ApplyReliabilityAsync(saved); }
         }
         catch (Exception ex) when (ex is IOException or FormatException or JsonException)
         {
@@ -94,6 +105,7 @@ public sealed class AppService : IAsyncDisposable
             await _store.SaveAsync(_path, snapshot);
             Document = snapshot;
             ApplyMonitorSettings(snapshot);
+            await ApplyReliabilityAsync(snapshot);
         }
         finally { lock (_sync) _saving = false; _documentGate.Release(); }
     }
@@ -110,7 +122,36 @@ public sealed class AppService : IAsyncDisposable
     private void TrimLogs()
     {
         while (_logs.Count > _monitorSettings.MaxLogCount || (_logTextBytes > MaxLogTextBytes && _logs.Count > 1))
-            _logTextBytes -= LogTextBytes(_logs.Dequeue());
+        { _logTextBytes -= LogTextBytes(_logs.Dequeue()); Interlocked.Increment(ref _droppedLogs); }
+    }
+
+    private async Task ApplyReliabilityAsync(AppDocument document)
+    {
+        var next = ReliabilitySettings.FromUi(document.Ui);
+        var previousSettings = _reliability;
+        var framePresets = next.Framing.Mode == "auto"
+            ? document.Presets.Where(p => p.Format == "hex").Select(p => p.Content).ToArray() : [];
+        lock (_receiveSync)
+        {
+            if (next.Framing != previousSettings.Framing || !framePresets.SequenceEqual(_framePresets))
+            {
+                FlushReceiveCore();
+                _framer = new(next.Framing, framePresets.Select(HexCodec.Parse));
+                _framePresets = framePresets;
+            }
+            _reliability = next;
+        }
+        if (next.ContinuousLog != previousSettings.ContinuousLog)
+        {
+            ContinuousLogWriter? previous;
+            lock (_changeSync)
+            {
+                previous = _continuousLog;
+                _continuousLog = next.ContinuousLog ? new(LogDirectory, next.LogFileMiB, next.LogFiles) : null;
+            }
+            if (previous is not null) await previous.DisposeAsync();
+        }
+        else _continuousLog?.Configure(next.LogFileMiB, next.LogFiles);
     }
 
     public static void ValidateProfile(SerialProfile profile, bool requirePort = true)
@@ -152,6 +193,7 @@ public sealed class AppService : IAsyncDisposable
     {
         _disconnecting = true;
         Stop();
+        FlushReceive();
         await _lifecycle.WaitAsync();
         try
         {
@@ -254,14 +296,16 @@ public sealed class AppService : IAsyncDisposable
         });
     }
 
-    public void StartWorkflow(string id, string mode, bool stepOnly = false)
+    public void StartWorkflow(string id, string mode, bool stepOnly = false, int count = 5)
     {
         if (mode is not ("once" or "loop" or "count")) throw new FormatException("工作流运行模式无效");
+        if (count is < 1 or > 1000000) throw new FormatException("工作流循环次数须为 1～1000000");
         if (!Document.Workflows.TryGetValue(id, out var workflow) || workflow.Steps.Count == 0)
             throw new InvalidOperationException("工作流无可用步骤");
         var encodedPresets = new Dictionary<string, (string Name, byte[] Bytes)>(StringComparer.Ordinal);
         var steps = workflow.Steps.Select(step =>
         {
+            step.Validate();
             if (!encodedPresets.TryGetValue(step.PresetId, out var encoded))
             {
                 var preset = Document.Presets.FirstOrDefault(p => p.Id == step.PresetId)
@@ -270,7 +314,8 @@ public sealed class AppService : IAsyncDisposable
                 encodedPresets.Add(step.PresetId, encoded);
             }
 
-            return (Name: encoded.Name, Bytes: encoded.Bytes, Wait: step.Wait);
+            if (step.WaitForResponse && step.ResponseFormat == "text") _ = TextCodec.Encode(step.Response, Document.Profile.Encoding);
+            return (Name: encoded.Name, Bytes: encoded.Bytes, Wait: step.Wait, step.WaitForResponse, step.Response, step.ResponseFormat, step.TimeoutMs, step.Retries);
         }).ToArray();
         Claim("workflow", workflow.Name);
         var token = _runCancellation!.Token;
@@ -281,8 +326,8 @@ public sealed class AppService : IAsyncDisposable
         }
         _runner = RunGuardedAsync(async () =>
         {
-            var rounds = mode == "once" ? 1 : mode == "count" ? 5 : int.MaxValue;
-            for (var round = 1; round <= rounds; round++)
+            var rounds = mode == "once" ? 1 : mode == "count" ? count : long.MaxValue;
+            for (long round = 1; round <= rounds; round++)
                 for (var index = 0; index < steps.Length; index++)
                 {
                     token.ThrowIfCancellationRequested();
@@ -290,9 +335,26 @@ public sealed class AppService : IAsyncDisposable
                     lock (_sync) paused = _run.Paused;
                     if (paused) await _runSignal.WaitAsync(token);
                     token.ThrowIfCancellationRequested();
-                    lock (_sync) _run = _run with { Step = index, Round = round };
+                    lock (_sync) _run = _run with { Step = index, Round = (int)Math.Min(round, int.MaxValue) };
                     PublishStatus();
-                    await WriteAsync(steps[index].Bytes, steps[index].Name, token);
+                    var step = steps[index];
+                    for (var attempt = 0; ; attempt++)
+                    {
+                        var response = step.WaitForResponse ? new ResponseWaiter(step.Response, step.ResponseFormat, Document.Profile.Encoding) : null;
+                        var awaitingResponse = false;
+                        lock (_receiveSync) _responseWaiter = response;
+                        try
+                        {
+                            await WriteAsync(step.Bytes, step.Name, token);
+                            if (response is not null) { awaitingResponse = true; await response.Completion.Task.WaitAsync(TimeSpan.FromMilliseconds(step.TimeoutMs), token); }
+                            break;
+                        }
+                        catch (TimeoutException) when (awaitingResponse && attempt < step.Retries)
+                        { AddLog("SYS", $"{step.Name} 应答超时，重试 {attempt + 1}/{step.Retries}", [], "工作流"); }
+                        catch (TimeoutException ex) when (awaitingResponse)
+                        { throw new TimeoutException($"{step.Name} 等待应答超时（{step.TimeoutMs} ms），工作流已停止", ex); }
+                        finally { lock (_receiveSync) if (_responseWaiter == response) _responseWaiter = null; }
+                    }
                     await Task.Delay(steps[index].Wait, token);
                 }
             AddLog("SYS", "工作流执行完成", [], "工作流");
@@ -344,7 +406,7 @@ public sealed class AppService : IAsyncDisposable
     {
         try { await run(); }
         catch (OperationCanceledException) { AddLog("SYS", "发送任务已停止", [], "运行"); }
-        catch (Exception ex) { AddLog("SYS", "发送任务失败：" + ex.Message, [], "错误"); }
+        catch (Exception ex) { DiagnosticLog.Write("发送任务", ex); AddLog("SYS", "发送任务失败：" + ex.Message, [], "错误"); }
         finally { FinishRun(); }
     }
 
@@ -381,32 +443,57 @@ public sealed class AppService : IAsyncDisposable
     private void OnData(object? sender, SerialDataReceivedEventArgs e)
     {
         if (_disposed || _disconnecting || _transportUnavailable || _connection.State != SerialConnectionState.Open) return;
+        Interlocked.Add(ref _rx, e.Bytes.Length);
+        lock (_receiveSync)
+        {
+            _responseWaiter?.Feed(e.Bytes);
+            if (_framer.BufferedBytes == 0) _receiveTimestamp = e.Timestamp;
+            foreach (var frame in _framer.Feed(e.Bytes)) ReceiveFrame(frame, _receiveTimestamp);
+            if (_framer.BufferedBytes > 0) _receiveIdle.Change(_reliability.Framing.IdleMs, Timeout.Infinite);
+            else _receiveIdle.Change(Timeout.Infinite, Timeout.Infinite);
+        }
+        PublishStatus();
+    }
+
+    private void FlushReceive()
+    {
+        lock (_receiveSync) FlushReceiveCore();
+    }
+
+    private void FlushReceiveCore()
+    {
+        _receiveIdle.Change(Timeout.Infinite, Timeout.Infinite);
+        var bytes = _framer.Flush();
+        if (bytes.Length > 0) ReceiveFrame(bytes, _receiveTimestamp);
+    }
+
+    private void ReceiveFrame(byte[] bytes, DateTimeOffset timestamp)
+    {
         string text;
         lock (_sync)
         {
-            var chars = ArrayPool<char>.Shared.Rent(TextCodec.GetEncoding(Document.Profile.Encoding).GetMaxCharCount(e.Bytes.Length));
+            var chars = ArrayPool<char>.Shared.Rent(TextCodec.GetEncoding(Document.Profile.Encoding).GetMaxCharCount(bytes.Length));
             try
             {
-                var count = _decoder.GetChars(e.Bytes, 0, e.Bytes.Length, chars, 0, false);
+                var count = _decoder.GetChars(bytes, 0, bytes.Length, chars, 0, false);
                 text = new string(chars, 0, count);
             }
             finally { ArrayPool<char>.Shared.Return(chars); }
         }
-        Interlocked.Add(ref _rx, e.Bytes.Length);
-        AddLog("RX", text, e.Bytes, "串口", e.Timestamp);
-        PublishStatus();
+        AddLog("RX", text, bytes, "串口", timestamp);
     }
 
     private void OnError(object? sender, SerialConnectionErrorEventArgs e)
     {
         Stop();
+        if (e.Exception is not null) DiagnosticLog.Write("串口", e.Exception);
         AddLog("SYS", e.Message, [], "错误");
         PublishStatus();
     }
 
     private void OnConnectionChanged(object? sender, EventArgs e)
     {
-        if (_connection.State != SerialConnectionState.Open) Stop();
+        if (_connection.State != SerialConnectionState.Open) { Stop(); FlushReceive(); }
         PublishStatus();
     }
 
@@ -426,6 +513,7 @@ public sealed class AppService : IAsyncDisposable
                 _logTextBytes += LogTextBytes(entry);
                 TrimLogs();
             }
+            _continuousLog?.Append(entry);
             Changed?.Invoke("log", entry);
         }
     }
@@ -437,7 +525,7 @@ public sealed class AppService : IAsyncDisposable
             lock (_sync) { _logs.Clear(); _logTextBytes = 0; }
         }
     }
-    public void ResetStats() { Interlocked.Exchange(ref _tx, 0); Interlocked.Exchange(ref _rx, 0); PublishStatus(); }
+    public void ResetStats() { Interlocked.Exchange(ref _tx, 0); Interlocked.Exchange(ref _rx, 0); Interlocked.Exchange(ref _droppedLogs, 0); _continuousLog?.ResetDropped(); PublishStatus(); }
     public AppStatus Status()
     {
         SerialPinState? pins = null;
@@ -450,7 +538,8 @@ public sealed class AppService : IAsyncDisposable
         }
         RunStatus run;
         lock (_sync) run = _run;
-        return new(connected, _connection.Port?.PortName ?? "", Interlocked.Read(ref _tx), Interlocked.Read(ref _rx), run, pins, pinError);
+        return new(connected, _connection.Port?.PortName ?? "", Interlocked.Read(ref _tx), Interlocked.Read(ref _rx), run, pins, pinError,
+            Interlocked.Read(ref _droppedLogs), _continuousLog?.Error, _continuousLog?.Dropped ?? 0, LogDirectory);
     }
 
     public void SetPins(bool dtr, bool rts)
@@ -477,6 +566,7 @@ public sealed class AppService : IAsyncDisposable
         if (_disposed) return;
         _disposed = true;
         Stop();
+        FlushReceive();
         _connection.DataReceived -= OnData;
         _connection.Error -= OnError;
         _connection.StateChanged -= OnConnectionChanged;
@@ -484,5 +574,11 @@ public sealed class AppService : IAsyncDisposable
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex); }
         try { await Observe(_runner).WaitAsync(TimeSpan.FromSeconds(1)); }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex); }
+        if (_continuousLog is not null)
+        {
+            try { await Observe(_continuousLog.DisposeAsync().AsTask()).WaitAsync(TimeSpan.FromSeconds(3)); }
+            catch (Exception ex) { DiagnosticLog.Write("关闭持续日志", ex); }
+        }
+        _receiveIdle.Dispose();
     }
 }

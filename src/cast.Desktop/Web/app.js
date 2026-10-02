@@ -8,7 +8,7 @@ let displayMode = 'text', translateProtocol = false, autoScroll = true, searchIn
 let initialized = false, saveTimer, toastTimer, renderTimer, renderQueued = false, validationVersion = 0, refreshPending = false;
 let savedDocument;
 let saveQueue = Promise.resolve(), saveRevision = 0, validationTimer, closePending = false, exportPending = false;
-const MAX_DOCUMENT_CHARS = 64 * 1024 * 1024, DOCUMENT_CHUNK_CHARS = 128 * 1024;
+const MAX_DOCUMENT_CHARS = CastRules.maxDocumentChars, DOCUMENT_CHUNK_CHARS = 128 * 1024;
 let modalReturnFocus, modalFallbackFocus;
 let confirmationAction;
 let updateState = { phase: 'unconfigured', message: '更新地址尚未配置' }, updateRequestPending = false;
@@ -24,6 +24,21 @@ const logCache = new WeakMap();
 const expandedProtocols = new WeakSet(), protocolIcons = new Map();
 const clockFormat = new Intl.DateTimeFormat('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 let protocolVersion = 0, protocolRules = [], searchTimer, logView, filteredSource, filteredDirection, filteredLogs = [];
+let receiveFrameMode = 'raw', receiveIdleMs = 30, receiveFrameLength = 8, receiveDelimiter = '0D 0A';
+let continuousLog = false, logFileMiB = 16, logFiles = 10;
+let logTextBytes = 0, logBudgetSource, logRevision = 0, filteredRevision = -1, bridgeDroppedLogs = 0;
+const operationErrors = [];
+let lastLogError;
+
+function recordError(message) {
+  operationErrors.unshift({ time: new Date().toLocaleTimeString(), message: String(message) });
+  operationErrors.length = Math.min(operationErrors.length, 100);
+  $('btnOpenErrors').setAttribute('aria-label', `查看操作错误记录（${operationErrors.length} 条）`);
+  renderErrors();
+}
+function renderErrors() {
+  $('operationErrors').innerHTML = operationErrors.map(item => `<div class="operation-error"><time>${escapeHtml(item.time)}</time><span>${escapeHtml(item.message)}</span></div>`).join('') || '<div class="empty-state">本次运行暂无操作错误</div>';
+}
 
 function cachedLog(log) {
   let cached = logCache.get(log);
@@ -32,14 +47,21 @@ function cachedLog(log) {
 }
 
 function appendLogs(entries) {
-  const combined = logs.concat(entries);
-  let start = combined.length, bytes = 0;
-  while (start > 0 && combined.length - start < maxLogCount) {
-    const log = combined[start - 1], size = 2 * (log.text.length + log.hex.length);
-    if (bytes + size > MAX_LOG_TEXT_BYTES && start < combined.length) break;
-    bytes += size; start--;
+  if (logView && !logView.externalAnchor) logView.externalAnchor = logView.anchor();
+  if (logBudgetSource !== logs) {
+    logBudgetSource = logs;
+    logTextBytes = logs.reduce((sum, log) => sum + 2 * (log.text.length + log.hex.length), 0);
   }
-  logs = combined.slice(start);
+  for (const log of entries) {
+    logs.push(log); logTextBytes += 2 * (log.text.length + log.hex.length);
+    if (log.dir === 'SYS' && log.source === '错误') recordError(log.text);
+  }
+  let trim = 0;
+  while (logs.length - trim > maxLogCount || (logTextBytes > MAX_LOG_TEXT_BYTES && logs.length - trim > 1)) {
+    const log = logs[trim++]; logTextBytes -= 2 * (log.text.length + log.hex.length);
+  }
+  if (trim) logs.splice(0, trim);
+  logRevision++;
 }
 
 function request(command, data = {}) {
@@ -61,7 +83,7 @@ function toast(text) {
   toastTimer = setTimeout(() => $('globalToast').classList.remove('show'), 4500);
 }
 
-function safe(action) { return async event => { try { await action(event); } catch (error) { toast(error.message); } }; }
+function safe(action) { return async event => { try { await action(event); } catch (error) { recordError(error.message); toast(error.message); } }; }
 
 function renderUpdate(next = updateState) {
   updateState = next;
@@ -185,6 +207,11 @@ function configureSendTools() {
   window.addEventListener('blur', () => closeSendTools());
 }
 
+function updateModalScrollbar(dialog) {
+  if (!dialog || !dialog.getClientRects().length) return;
+  const style = getComputedStyle(dialog);
+  dialog.style.setProperty('--modal-scrollbar', `${Math.max(0, dialog.offsetWidth - dialog.clientWidth - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth))}px`);
+}
 function showModal(id) {
   hideTooltip();
   closeSendTools();
@@ -193,6 +220,7 @@ function showModal(id) {
   modalReturnFocus = document.activeElement;
   modalFallbackFocus = null;
   $(id).classList.add('show');
+  updateModalScrollbar($(id).querySelector('.modal-dialog'));
   $(id).setAttribute('role', 'dialog');
   $(id).setAttribute('aria-modal', 'true');
   $(id).querySelector('input:not([type="hidden"]),select,button')?.focus();
@@ -310,6 +338,9 @@ function openSettings() {
   $('cfgRightFunction').value = leftFunction === 'presets' ? 'workflow' : 'presets';
   $('cfgLeftDefaultVisible').checked = leftDefaultVisible;
   $('cfgRightDefaultVisible').checked = rightDefaultVisible;
+  $('cfgReceiveMode').value = receiveFrameMode; $('cfgReceiveIdle').value = receiveIdleMs;
+  $('cfgReceiveLength').value = receiveFrameLength; $('cfgReceiveDelimiter').value = receiveDelimiter;
+  $('cfgContinuousLog').checked = continuousLog; $('cfgLogFileMiB').value = logFileMiB; $('cfgLogFiles').value = logFiles;
   showModal('settingsModal');
 }
 
@@ -372,12 +403,13 @@ async function refreshPorts() {
 function captureUi() {
   documentState.ui = { displayMode, translateProtocol, autoScroll, currentWorkflow, theme, terminalFontSize, clearAfterSend,
     uiFontSize, rememberInput, hoverTips, showPins, leftFunction, leftDefaultVisible, rightDefaultVisible, maxLogCount, refreshIntervalMs,
+    receiveFrameMode, receiveIdleMs, receiveFrameLength, receiveDelimiter, continuousLog, logFileMiB, logFiles,
     inputDraft: rememberInput ? $('manualInput').value.slice(0, 1048576) : '',
     leftHidden: $('workspaceBody').classList.contains('hide-left'), rightHidden: $('workspaceBody').classList.contains('hide-right'),
     sendHeight: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--send-box-h')) || 135,
     timestamp: $('selTimestampFormat').value, ending: $('selEnding').value, customEnding: $('customEndingHex').value,
     sendHex: $('chkSendHex').checked, lineByLine: $('chkLineByLine').checked,
-    interval: Number($('repeatInterval').value), workflowMode: $('selWfMode').value };
+    interval: Number($('repeatInterval').value), workflowMode: $('selWfMode').value, workflowCount: Number($('workflowRepeatCount').value) };
   if (!status.connected) documentState.profile = profileFromControls();
 }
 
@@ -421,7 +453,7 @@ async function saveNow(uiOverrides = {}, forClose = false) {
   saveQueue = work;
   return work;
 }
-function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => saveNow().catch(error => toast(error.message)), 300); }
+function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => saveNow().catch(error => { recordError(error.message); toast(error.message); }), 300); }
 
 function restoreUi() {
   const ui = documentState.ui || {};
@@ -431,6 +463,9 @@ function restoreUi() {
   terminalFontSize = TERMINAL_FONT_SIZES.includes(ui.terminalFontSize) ? ui.terminalFontSize : 12;
   rememberInput = ui.rememberInput !== false; hoverTips = ui.hoverTips !== false;
   showPins = ui.showPins === true;
+  receiveFrameMode = ui.receiveFrameMode || 'raw'; receiveIdleMs = ui.receiveIdleMs ?? 30;
+  receiveFrameLength = ui.receiveFrameLength ?? 8; receiveDelimiter = ui.receiveDelimiter ?? '0D 0A';
+  continuousLog = ui.continuousLog === true; logFileMiB = ui.logFileMiB ?? 16; logFiles = ui.logFiles ?? 10;
   leftFunction = ui.leftFunction === 'workflow' ? 'workflow' : 'presets';
   leftDefaultVisible = ui.leftDefaultVisible ?? !ui.leftHidden;
   rightDefaultVisible = ui.rightDefaultVisible ?? ui.rightHidden === false;
@@ -452,6 +487,8 @@ function restoreUi() {
   $('chkLineByLine').checked = !!ui.lineByLine;
   $('repeatInterval').value = ui.interval || 1000;
   $('selWfMode').value = ui.workflowMode || 'once';
+  $('workflowRepeatCount').value = ui.workflowCount || 5;
+  $('workflowRepeatCount').hidden = $('selWfMode').value !== 'count';
   updateViewButtons();
 }
 
@@ -490,6 +527,9 @@ function updateStatus(next) {
   $('statusDot').classList.toggle('online', next.connected);
   $('statusPortLabel').textContent = next.connected ? `${next.port} · 已连接` : '未连接';
   $('statusStats').textContent = `TX: ${next.tx || 0} B  |  RX: ${next.rx || 0} B`;
+  $('logRetentionStatus').textContent = [next.droppedLogs ? `缓存淘汰 ${next.droppedLogs} 条` : '', bridgeDroppedLogs ? `界面丢弃 ${bridgeDroppedLogs} 条` : '', next.logDropped ? `日志丢弃 ${next.logDropped} 条` : '', next.logError || ''].filter(Boolean).join(' · ');
+  if (next.logError && next.logError !== lastLogError) { recordError(next.logError); lastLogError = next.logError; }
+  $('workflowRepeatCount').disabled = busy;
   $('statusChannel').textContent = run.kind === 'idle' ? '发送通道: 就绪' : run.kind === 'repeat' ? '发送通道: 定时循环' : run.kind === 'workflow' ? `工作流: ${run.paused ? '已暂停' : '执行中'} · 第 ${run.round || 1} 轮` : '发送通道: 发送中';
   for (const id of ['selPort', 'selBaud', 'btnAdvancedPort', 'btnRefreshPorts']) $(id).disabled = next.connected;
   for (const id of ['btnSend', 'chkSendHex', 'selEnding', 'customEndingHex', 'chkLineByLine', 'manualInput', 'repeatInterval', 'btnSendTools', 'btnAppendCrc', 'btnFormatHex', 'btnClearInput', 'btnNewPreset', 'btnImportPresets', 'btnSavePresetModal', 'btnNewWorkflow', 'btnDeleteWorkflow', 'selWorkflow', 'selAddStepPreset', 'inputStepWait', 'btnAddStepToWf', 'selWfMode']) $(id).disabled = busy;
@@ -518,11 +558,7 @@ function updateStatus(next) {
 }
 
 function parseHex(value) {
-  const source = String(value).trim();
-  if (!source) return [];
-  const clean = source.replace(/0x([0-9a-f]{2})/gi, '$1').replace(/[\s,]/g, '');
-  if (!/^[0-9a-f]+$/i.test(clean) || clean.length % 2) throw new Error('HEX 须为完整字节，且只含十六进制字符');
-  return clean.match(/.{2}/g).map(value => parseInt(value, 16));
+  return CastRules.parseHex(value);
 }
 function hexString(bytes) { return bytes.map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' '); }
 function parseProtocol(log) {
@@ -583,8 +619,9 @@ function matchesSearch(log, keyword = $('terminalSearch').value.trim().toLowerCa
 }
 function directionLogs() {
   const direction = $('filterDir').value;
-  if (filteredSource !== logs || filteredDirection !== direction) {
+  if (filteredSource !== logs || filteredDirection !== direction || filteredRevision !== logRevision) {
     filteredSource = logs; filteredDirection = direction;
+    filteredRevision = logRevision;
     filteredLogs = direction === 'all' ? logs : logs.filter(log => log.dir.toLowerCase() === direction);
   }
   return filteredLogs;
@@ -644,6 +681,7 @@ function createLogRow(log) {
   const row = document.createElement('div');
   row.className = `log-entry ${protocol ? 'proto-mode' : ''} ${system ? 'system-log' : ''} ${time ? '' : 'without-time'}`;
   row.dataset.id = log.id;
+  row.log = log;
   row.innerHTML = `${time ? `<span class="log-time">[${time}]</span>` : ''}<span class="log-dir ${log.dir.toLowerCase()}">${log.dir}</span><span class="log-text${rawHex ? ' log-hex' : ''}">${body}</span>${system ? '' : `<button type="button" class="protocol-action protocol-expand" data-log-action="expand" aria-label="展开协议释义">${protocolIcon('ChevronRight')}</button>`}`;
   if (protocol) {
     row.classList.toggle('protocol-error', !!protocol.error);
@@ -691,7 +729,7 @@ function renderPresets() {
   $('presetListContainer').innerHTML = documentState.presets.filter(p => `${p.name} ${p.content} ${p.desc}`.toLowerCase().includes(keyword)).map(p => `
     <div class="preset-row" data-id="${escapeHtml(p.id)}" tabindex="0" role="button" aria-label="载入 ${escapeHtml(p.name)}">
       <div class="preset-title"><span>${escapeHtml(p.name)}</span><span class="preset-format-tag">${p.format === 'hex' ? 'HEX' : 'TXT'}</span></div>
-      <div class="preset-body">${escapeHtml(p.content)}</div>
+      <div class="preset-body">${escapeHtml(p.content.slice(0, 256))}${p.content.length > 256 ? '…' : ''}</div>
       <div class="preset-desc">${escapeHtml(p.desc)}</div>
       <div class="preset-hover-actions">${[['send','send','发送'],['load','corner-down-left','载入'],['edit','pencil','编辑'],['delete','trash-2','删除']].map(([action, icon, label]) => `<button class="icon-button" data-action="${action}" data-tooltip="${label}" aria-label="${label} ${escapeHtml(p.name)}"><i data-lucide="${icon}"></i></button>`).join('')}</div>
     </div>`).join('') || '<div class="empty-state">暂无预设指令</div>';
@@ -709,7 +747,12 @@ function renderWorkflow() {
   const workflow = documentState.workflows[currentWorkflow];
   $('workflowStepsContainer').innerHTML = workflow?.steps.map((step, index) => {
     const preset = documentState.presets.find(p => p.id === step.presetId);
-    return `<div class="workflow-step-card" data-index="${index}"><span class="step-index">${index + 1}</span><div class="step-name">${escapeHtml(preset?.name || '预设已删除')}</div><div class="step-controls"><div class="step-delay-box"><span>等待:</span><input type="number" min="0" max="86400000" value="${step.wait}" aria-label="步骤 ${index + 1} 等待毫秒"><span>ms</span></div><div class="step-actions-group"><button data-action="up" aria-label="上移"><i data-lucide="chevron-up"></i></button><button data-action="down" aria-label="下移"><i data-lucide="chevron-down"></i></button><button data-action="remove" aria-label="移除"><i data-lucide="x"></i></button></div></div></div>`;
+    return `<div class="workflow-step-card" data-index="${index}"><span class="step-index">${index + 1}</span><div class="step-name">${escapeHtml(preset?.name || '预设已删除')}</div><div class="step-controls"><div class="step-delay-box"><span>等待:</span><input type="number" min="0" max="86400000" value="${step.wait}" aria-label="步骤 ${index + 1} 等待毫秒"><span>ms</span></div><div class="step-actions-group"><button data-action="up" aria-label="上移"><i data-lucide="chevron-up"></i></button><button data-action="down" aria-label="下移"><i data-lucide="chevron-down"></i></button><button data-action="remove" aria-label="移除"><i data-lucide="x"></i></button></div></div>
+      <details class="step-response"><summary>应答控制${step.waitForResponse ? ' · 已启用' : ''}</summary><label class="preference-check"><input type="checkbox" data-field="waitForResponse" ${step.waitForResponse ? 'checked' : ''}>等待设备应答</label>
+      <select data-field="responseFormat" aria-label="步骤 ${index + 1} 应答格式"><option value="text" ${step.responseFormat !== 'hex' ? 'selected' : ''}>文本应答</option><option value="hex" ${step.responseFormat === 'hex' ? 'selected' : ''}>HEX 应答</option></select>
+      <input type="text" data-field="response" maxlength="4096" value="${escapeHtml(step.response || '')}" placeholder="例如 OK 或 AA 55" aria-label="步骤 ${index + 1} 预期应答">
+      <label>超时 (ms)<input type="number" data-field="timeoutMs" min="20" max="600000" value="${step.timeoutMs || 1000}" aria-label="步骤 ${index + 1} 应答超时"></label>
+      <label>重试次数<input type="number" data-field="retries" min="0" max="10" value="${step.retries || 0}" aria-label="步骤 ${index + 1} 应答重试次数"></label></details></div>`;
   }).join('') || '<div class="empty-state">暂无步骤</div>';
   icons();
   updateStatus(status);
@@ -729,7 +772,7 @@ async function validateInput() {
     $('sendValidationTip').style.display = 'none';
   } catch (error) {
     if (version !== validationVersion) return;
-    $('sendValidationTip').textContent = '格式错误';
+    $('sendValidationTip').textContent = error.message;
     $('sendValidationTip').setAttribute('aria-label', error.message);
     $('sendValidationTip').style.display = '';
     $('sendByteCounter').textContent = '-- 字节';
@@ -744,7 +787,7 @@ async function sendManual() {
   ensureIdle(); const data = manualRequest(); await saveNow(); await request('send', data); remember(data.text);
   if (clearAfterSend && $('manualInput').value === data.text) { $('manualInput').value = ''; validateInput(); }
 }
-async function workflowStart(stepOnly) { ensureIdle(); await saveNow(); await request('workflow', { id: currentWorkflow, mode: $('selWfMode').value, stepOnly }); }
+async function workflowStart(stepOnly) { ensureIdle(); await saveNow(); await request('workflow', { id: currentWorkflow, mode: $('selWfMode').value, count: Number($('workflowRepeatCount').value), stepOnly }); }
 
 function editPreset(preset = null) {
   ensureIdle();
@@ -774,9 +817,27 @@ function exportData(rows, format, options) {
   if (format === 'json') return JSON.stringify(items, null, 2);
   if (format === 'txt') return items.map(item => [item.timestamp, item.dir, item.text, item.hex, item.protocol?.title, item.protocol?.desc].filter(value => value !== undefined).join('\t')).join('\r\n');
   const headers = [...(options.time ? ['时间'] : []), '方向', '数据内容', ...(options.hex ? ['HEX', '字节数'] : []), ...(options.protocol ? ['协议指令','协议释义'] : [])];
-  const quote = value => `"${String(value ?? '').replaceAll('"','""')}"`;
+  const quote = value => CastRules.csvCell(value, options.csvSafe !== false);
   return [headers, ...items.map(item => [...(options.time ? [item.timestamp] : []), item.dir, item.text, ...(options.hex ? [item.hex,item.byteCount] : []), ...(options.protocol ? [item.protocol.title,item.protocol.desc] : [])])].map(row => row.map(quote).join(',')).join('\r\n');
 }
+async function importPresets() {
+  const result = await request('import');
+  if (result === null || Array.isArray(result)) return result;
+  const { transferId: id, length } = result;
+  if (!id || !Number.isInteger(length) || length < 1 || length > MAX_DOCUMENT_CHARS) throw new Error('预设传输容量或标识无效');
+  const chunks = []; let offset = 0;
+  try {
+    while (offset < length) {
+      const { content } = await request('importChunk', { id, offset });
+      if (typeof content !== 'string' || !content.length || content.length > DOCUMENT_CHUNK_CHARS || offset + content.length > length) throw new Error('预设分块大小无效');
+      chunks.push(content); offset += content.length;
+    }
+    const presets = JSON.parse(chunks.join(''));
+    await request('importFinish', { id });
+    return presets;
+  } catch (error) { await request('importAbort', { id }).catch(() => {}); throw error; }
+}
+
 async function exportContent(content, format, fileName) {
   if (exportPending) throw new Error('已有导出任务正在进行');
   exportPending = true;
@@ -809,12 +870,18 @@ async function exportContentCore(content, format, fileName) {
 }
 
 function configureEvents() {
+  const modalResize = new ResizeObserver(entries => entries.forEach(entry => updateModalScrollbar(entry.target)));
+  $$('.modal-dialog').forEach(dialog => modalResize.observe(dialog));
   for (const id of ['btnCloseConfirmation','btnCancelConfirmation']) on(id,'click',() => hideModal('confirmationModal'));
   on('btnConfirmAction','click',submitConfirmation);
   on('btnOpenSettings','click',openSettings);
   on('btnToggleTheme','click',() => { theme = theme === 'dark' ? 'light' : 'dark'; applyAppearance(); scheduleSave(); });
   on('btnOpenShortcuts','click',() => showModal('shortcutsModal'));
   on('btnOpenAbout','click',() => showModal('aboutModal'));
+  on('btnOpenErrors','click',() => { renderErrors(); showModal('errorsModal'); });
+  on('btnCloseErrors','click',() => hideModal('errorsModal'));
+  on('btnOpenDiagnostics','click',() => request('openDiagnostics'));
+  on('btnOpenLogs','click',() => request('openLogs'));
   on('btnCheckUpdate','click',() => runUpdate('updateCheck'));
   on('btnDownloadUpdate','click',() => runUpdate('updateDownload'));
   on('btnInstallUpdate','click',() => runUpdate('updateInstall'));
@@ -827,6 +894,8 @@ function configureEvents() {
     $('cfgAutoScroll').checked = true; $('cfgShowPins').checked = false;
     $('cfgLeftFunction').value = 'presets'; $('cfgRightFunction').value = 'workflow';
     $('cfgLeftDefaultVisible').checked = true; $('cfgRightDefaultVisible').checked = false;
+    $('cfgReceiveMode').value = 'raw'; $('cfgReceiveIdle').value = '30'; $('cfgReceiveLength').value = '8'; $('cfgReceiveDelimiter').value = '0D 0A';
+    $('cfgContinuousLog').checked = false; $('cfgLogFileMiB').value = '16'; $('cfgLogFiles').value = '10';
     applyTypography(12, 12); applyHoverTips(true); applyPinVisibility(false);
   });
   for (const id of ['cfgUiFontSize', 'cfgTerminalFontSize']) on(id, 'change', () => applyTypography(Number($('cfgUiFontSize').value), Number($('cfgTerminalFontSize').value)));
@@ -835,12 +904,16 @@ function configureEvents() {
   for (const [id, other] of [['cfgLeftFunction', 'cfgRightFunction'], ['cfgRightFunction', 'cfgLeftFunction']]) on(id, 'change', () => { $(other).value = $(id).value === 'presets' ? 'workflow' : 'presets'; });
   on('btnSaveSettingsModal','click',async () => {
     ensureIdle();
-    for (const id of ['cfgMaxLogCount', 'cfgRefreshIntervalMs']) if (!$(id).reportValidity()) return;
+    for (const id of ['cfgMaxLogCount', 'cfgRefreshIntervalMs', 'cfgReceiveIdle', 'cfgReceiveLength', 'cfgLogFileMiB', 'cfgLogFiles']) if (!$(id).reportValidity()) return;
+    if ($('cfgReceiveMode').value === 'delimiter' && !parseHex($('cfgReceiveDelimiter').value).length) throw new Error('请填写完整 HEX 分隔符');
     const monitorSettings = { maxLogCount: Number($('cfgMaxLogCount').value), refreshIntervalMs: Number($('cfgRefreshIntervalMs').value) };
     uiFontSize = Number($('cfgUiFontSize').value);
     terminalFontSize = Number($('cfgTerminalFontSize').value); clearAfterSend = $('cfgClearAfterSend').checked;
     rememberInput = $('cfgRememberInput').checked; hoverTips = $('cfgHoverTips').checked;
     autoScroll = $('cfgAutoScroll').checked; showPins = $('cfgShowPins').checked;
+    receiveFrameMode = $('cfgReceiveMode').value; receiveIdleMs = Number($('cfgReceiveIdle').value);
+    receiveFrameLength = Number($('cfgReceiveLength').value); receiveDelimiter = $('cfgReceiveDelimiter').value;
+    continuousLog = $('cfgContinuousLog').checked; logFileMiB = Number($('cfgLogFileMiB').value); logFiles = Number($('cfgLogFiles').value);
     leftFunction = $('cfgLeftFunction').value;
     const leftVisible = $('cfgLeftDefaultVisible').checked, rightVisible = $('cfgRightDefaultVisible').checked;
     if (leftVisible !== leftDefaultVisible) $('workspaceBody').classList.toggle('hide-left', !leftVisible);
@@ -885,7 +958,7 @@ function configureEvents() {
   });
   on('logStream','click',event => {
     if (event.target.closest('.protocol-detail') || event.detail > 1) return;
-    const row = event.target.closest('.log-entry'), log = logs.find(item => String(item.id) === row?.dataset.id);
+    const row = event.target.closest('.log-entry'), log = row?.log;
     if (!log || log.dir === 'SYS') return;
     const button = event.target.closest('[data-log-action="expand"]');
     if (!button && !window.getSelection().isCollapsed) return;
@@ -895,7 +968,7 @@ function configureEvents() {
   on('logStream','dblclick',async event => {
     if (event.target.closest('button, .protocol-detail')) return;
     const row = event.target.closest('.log-entry');
-    const log = logs.find(item => String(item.id) === row?.dataset.id);
+    const log = row?.log;
     if (logClick?.log === log) {
       if (expandedProtocols.has(log) !== logClick.expanded) setLogExpanded(log, logClick.expanded);
       logClick = null;
@@ -955,9 +1028,9 @@ function configureEvents() {
       action: async () => { ensureIdle(); documentState.presets = documentState.presets.filter(p => p.id !== preset.id); await saveNow(); renderPresets(); renderWorkflow(); renderLogs(); } });
   });
   on('presetListContainer','keydown',event => { if (event.key === 'Enter' && event.target.classList.contains('preset-row')) event.target.click(); });
-  on('btnExportPresets','click',async () => { const result = await request('export',{ format:'json', fileName:'cast-presets.json', content:JSON.stringify(documentState.presets,null,2) }); if (result.saved) toast('预设已导出'); });
+  on('btnExportPresets','click',async () => { const result = await exportContent(JSON.stringify(documentState.presets), 'json', 'cast-presets.json'); if (result.saved) toast('预设已导出'); });
   on('btnImportPresets','click',async () => {
-    ensureIdle(); const imported = await request('import'); if (imported === null) return;
+    ensureIdle(); const imported = await importPresets(); if (imported === null) return;
     const presets = validatePresets(imported);
     showConfirmation({ title: '替换预设库', message: `确认用 ${presets.length} 条预设替换当前 ${documentState.presets.length} 条预设？覆盖后无法撤销，工作流中缺失的预设引用需要重新配置。`, confirmLabel: '替换',
       action: async () => {
@@ -966,7 +1039,8 @@ function configureEvents() {
       } });
   });
   on('selWorkflow','change',() => { currentWorkflow = $('selWorkflow').value; renderWorkflow(); scheduleSave(); });
-  on('selWfMode','change',scheduleSave);
+  on('selWfMode','change',() => { $('workflowRepeatCount').hidden = $('selWfMode').value !== 'count'; scheduleSave(); });
+  on('workflowRepeatCount','change',scheduleSave);
   on('btnNewWorkflow','click',() => {
     ensureIdle();
     $('workflowName').value = '新工作流';
@@ -1016,7 +1090,15 @@ function configureEvents() {
     else { const target = index + (button.dataset.action === 'up' ? -1 : 1); if (target >= 0 && target < steps.length) [steps[index],steps[target]] = [steps[target],steps[index]]; }
     await saveNow(); renderWorkflow();
   });
-  on('workflowStepsContainer','change',async event => { ensureIdle(); const value = Number(event.target.value); if (!Number.isInteger(value) || value < 0 || value > 86400000) { renderWorkflow(); throw new Error('等待时间无效'); } documentState.workflows[currentWorkflow].steps[Number(event.target.closest('[data-index]').dataset.index)].wait = value; await saveNow(); });
+  on('workflowStepsContainer','change',async event => {
+    ensureIdle();
+    const field = event.target.dataset.field || 'wait';
+    const value = event.target.type === 'checkbox' ? event.target.checked : event.target.type === 'number' ? Number(event.target.value) : event.target.value;
+    const step = documentState.workflows[currentWorkflow].steps[Number(event.target.closest('[data-index]').dataset.index)];
+    if (field === 'wait' && (!Number.isInteger(value) || value < 0 || value > 86400000)) { renderWorkflow(); throw new Error('等待时间无效'); }
+    step[field] = value;
+    await saveNow();
+  });
   on('btnStartWf','click',() => workflowStart(false));
   on('btnStepWf','click',() => status.run.kind === 'idle' ? workflowStart(true) : request('step'));
   on('btnPauseWf','click',() => request('pause', { paused: !status.run.paused }));
@@ -1039,7 +1121,7 @@ function configureEvents() {
     try {
     const rows = document.querySelector('input[name="exportScope"]:checked').value === 'filtered' ? directionLogs().filter(log => matchesSearch(log)) : logs;
     const format = $('exportFormat').value;
-    const content = exportData(rows,format,{ time:$('chkExportTime').checked,hex:$('chkExportHex').checked,protocol:$('chkExportProto').checked });
+    const content = exportData(rows,format,{ time:$('chkExportTime').checked,hex:$('chkExportHex').checked,protocol:$('chkExportProto').checked,csvSafe:$('chkCsvSafe').checked });
     const result = await exportContent(content, format, $('exportFileName').value); if (result.saved) { hideModal('exportModal'); toast('日志已导出'); }
     } finally { $('btnConfirmExport').disabled = false; }
   });
@@ -1079,6 +1161,7 @@ function configureEvents() {
 }
 
 async function initialize() {
+  document.fonts.addEventListener('loadingdone', () => { logView?.invalidate(); logView?.schedule(); });
   for (const [id, action] of [['btnPinWindow','pin'],['btnWinMin','minimize'],['btnWinMax','maximize'],['btnWinClose','close']]) {
     on(id,'click',async () => {
       updateWindowState(await request('window', { action }));
@@ -1126,7 +1209,7 @@ window.chrome?.webview.addEventListener('message',event => {
     const item = pending.get(message.id); clearTimeout(item.timeout); pending.delete(message.id);
     message.ok ? item.resolve(message.result) : item.reject(new Error(message.error || '操作失败'));
   } else if (message.event === 'log' || message.event === 'logs') { appendLogs(message.event === 'logs' ? message.data : [message.data]); if (initialized) queueRender(); }
-  else if (message.event === 'status' && initialized) updateStatus(message.data);
+  else if (message.event === 'status' && initialized) { bridgeDroppedLogs = message.bridgeDroppedLogs ?? bridgeDroppedLogs; updateStatus(message.data); }
   else if (message.event === 'window') updateWindowState(message.data);
   else if (message.event === 'update') renderUpdate(message.data);
   else if (message.event === 'closing') {
@@ -1138,7 +1221,7 @@ window.chrome?.webview.addEventListener('message',event => {
       catch (error) { await request('closeReady', { id: message.data.id, error: error.message }); }
     })().catch(error => toast(error.message));
   } else if (message.event === 'closeCancelled') {
-    closePending = false; document.body.inert = false; toast(message.data.error);
+    closePending = false; document.body.inert = false; recordError(message.data.error); toast(message.data.error);
   }
 });
 initialize().catch(error => {
